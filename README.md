@@ -135,76 +135,48 @@ Google API / OAuth / Python / PIL 은 사용하지 않습니다.
 - [`systemd/epdcal.service`](systemd/epdcal.service:1) – systemd 서비스 유닛
 - [`progress.md`](progress.md:1) – 개발 진행/설계 메모
 - [`README.md`](README.md:1) – 이 문서
+- [`go.mod`](go.mod:1) – Go 모듈 및 Go 1.25.5 버전 선언
+- (추가 예정) [`Makefile`](Makefile:1) – 빌드/테스트/배포 자동화
 
-### 2.2 주요 모듈 요약
+### 2.2 폴더 구조 정리 (권장 트리)
 
-- **설정** – [`internal/config/config.go`](internal/config/config.go:1)
-  - 구조체 예 (개략):
+실제 생성될 디렉터리 트리를 개념적으로 정리하면 다음과 같습니다.
 
-    ```go
-    type Config struct {
-        Listen        string        `yaml:"listen"`
-        Timezone      string        `yaml:"timezone"`
-        RefreshMinutes int          `yaml:"refresh_minutes"`
-        HorizonDays   int           `yaml:"horizon_days"`
-        ShowAllDay    bool          `yaml:"show_all_day"`
-        HighlightRed  []string      `yaml:"highlight_red"`
-        ICS           []ICSConfig   `yaml:"ics"`
-        BasicAuth     *BasicAuthCfg `yaml:"basic_auth,omitempty"`
-    }
-    ```
+- [`cmd/`](cmd:1)
+  - [`epdcal/`](cmd/epdcal:1)
+    - [`main.go`](cmd/epdcal/main.go:1) – 엔트리포인트
+- [`internal/`](internal:1)
+  - [`config/`](internal/config:1)
+    - [`config.go`](internal/config/config.go:1)
+  - [`web/`](internal/web:1)
+    - [`web.go`](internal/web/web.go:1)
+  - [`ics/`](internal/ics:1)
+    - [`fetch.go`](internal/ics/fetch.go:1)
+    - [`parse.go`](internal/ics/parse.go:1)
+    - [`expand.go`](internal/ics/expand.go:1)
+    - [`parse_test.go`](internal/ics/parse_test.go:1)
+    - [`expand_test.go`](internal/ics/expand_test.go:1)
+    - [`testdata/`](internal/ics/testdata:1) – 테스트용 ICS fixture
+  - [`model/`](internal/model:1)
+    - [`model.go`](internal/model/model.go:1)
+  - [`render/`](internal/render:1)
+    - [`render.go`](internal/render/render.go:1)
+  - [`convert/`](internal/convert:1)
+    - [`pack.go`](internal/convert/pack.go:1)
+  - [`epd/`](internal/epd:1)
+    - [`epd.go`](internal/epd/epd.go:1)
+    - [`epd_cgo.go`](internal/epd/epd_cgo.go:1)
+- [`waveshare/`](waveshare:1)
+  - (`EPD_12in48B.h`, C 소스 파일 등)
+- [`systemd/`](systemd:1)
+  - [`epdcal.service`](systemd/epdcal.service:1)
+- 루트
+  - [`README.md`](README.md:1)
+  - [`progress.md`](progress.md:1)
+  - [`go.mod`](go.mod:1)
+  - [`Makefile`](Makefile:1) (예정)
 
-  - 최초 실행 시 기본값 생성, 0600 권한 부여
-
-- **ICS 처리** – [`internal/ics`](internal/ics/fetch.go:1) 패키지
-  - `fetch.go` – HTTP 클라이언트, 조건부 요청, 캐시 관리
-  - `parse.go` – ICS 라이브러리를 활용해 VCALENDAR/VEVENT/VTIMEZONE 파싱
-  - `expand.go` – RRULE/EXDATE/RECURRENCE-ID 를 기반으로 occurrence 리스트 생성
-
-- **모델** – [`internal/model/model.go`](internal/model/model.go:1)
-  - 캘린더 소스(ICS URL), 이벤트, occurrence, all-day 여부, 로컬 시간대 변환된 시각 등
-
-- **렌더링** – [`internal/render/render.go`](internal/render/render.go:1)
-  - Go `image.NRGBA` 캔버스(1304x984)에 텍스트/레이아웃을 직접 그리기
-  - `x/image/font/opentype` 를 사용하여 폰트 렌더링 (한글/라틴 지원 폰트 번들 예정)
-  - 날짜/요일, N일 범위의 이벤트 목록, all-day 섹션 등을 정해진 레이아웃에 배치
-  - 특정 키워드/주말/휴일에 대해 red plane 을 사용하도록 마킹
-
-- **Packed Plane 변환** – [`internal/convert/pack.go`](internal/convert/pack.go:1)
-  - e-paper 요구사항:
-    - width = 1304, height = 984
-    - stride = 163 bytes (1304 / 8)
-    - plane 당 버퍼 크기 = `163 * 984 = 160392` bytes
-  - 1bpp MSB-first:
-    - `byteIndex = y*163 + (x >> 3)`
-    - `mask = 0x80 >> (x & 7)`
-  - 초기값은 0xFF (white)
-    - Black plane: bit=0 → 검은 잉크
-    - Red plane: bit=0 → 빨간 잉크 (C 드라이버에서 `~` 연산 후 전송)
-
-- **EPD 제어** – [`internal/epd/epd_cgo.go`](internal/epd/epd_cgo.go:1), [`internal/epd/epd.go`](internal/epd/epd.go:1)
-  - C 헤더 `EPD_12in48B.h` 에 대한 cgo 바인딩
-  - Go 측에서:
-    - `EPD_12in48B_Init()`
-    - `EPD_12in48B_Clear()`
-    - `EPD_12in48B_Display(black, red)`
-    - `EPD_12in48B_TurnOnDisplay()`
-    - `EPD_12in48B_Sleep()`
-  - `--render-only` 플래그 시 하드웨어 미사용 (파일dump/preview만)
-
-- **Web 서버** – [`internal/web/web.go`](internal/web/web.go:1)
-  - 설정 페이지 & JSON API
-  - Basic Auth (선택)
-  - 상태 정보: 마지막 갱신 시각, 다음 예약 갱신 시각, 마지막 에러 메시지 등
-
-- **엔트리포인트** – [`cmd/epdcal/main.go`](cmd/epdcal/main.go:1)
-  - 플래그 파싱:
-    - `--config /etc/epdcal/config.yaml`
-    - `--listen 127.0.0.1:8080`
-    - `--once`
-    - `--render-only`
-    - `--dump`
-  - 설정 로드, Web 서버 시작, 스케줄러 루프 실행, 시그널 처리
+이 구조를 기준으로, 실행 바이너리 `epdcal` 은 일반적으로 프로젝트 루트에서 빌드하며, 시스템 설치 시 `/usr/local/bin/epdcal` 로 복사합니다.
 
 ---
 
@@ -212,7 +184,7 @@ Google API / OAuth / Python / PIL 은 사용하지 않습니다.
 
 ### 3.1 요구 사항
 
-- Go 1.22 이상 (Linux/ARM 타겟 빌드)
+- Go 1.25.5 (또는 호환 버전) – [`go.mod`](go.mod:1)에 명시
 - Raspberry Pi (Raspbian 계열)
 - Waveshare 12.48" B e-paper 패널 + 해당 C 드라이버 라이브러리
 - C 컴파일러 (예: `gcc`)
@@ -244,7 +216,7 @@ GOOS=linux GOARCH=arm GOARM=7 go build -o epdcal ./cmd/epdcal
 GOOS=linux GOARCH=arm64 go build -o epdcal ./cmd/epdcal
 ```
 
- Waveshare C 드라이버와 cgo 연결 시 추가적인 `CGO_CFLAGS`, `CGO_LDFLAGS` 설정이 필요할 수 있습니다. 자세한 내용은 추후 [`waveshare/README.md`](waveshare/README.md:1) 에 정리합니다.
+Waveshare C 드라이버와 cgo 연결 시 추가적인 `CGO_CFLAGS`, `CGO_LDFLAGS` 설정이 필요할 수 있습니다. 자세한 내용은 추후 [`waveshare/README.md`](waveshare/README.md:1) 에 정리합니다.
 
 ---
 
@@ -584,3 +556,172 @@ sudo systemctl start epdcal
 
 개발 진행 및 세부 TODO 는 [`progress.md`](progress.md:1) 에 정리되어 있습니다.  
 이 문서는 전체 기능/요구사항을 개괄적으로 설명하는 README 이며, 세부 구현 계획은 progress 문서를 참고하십시오.
+
+---
+
+## 14. 폴더 구조 및 실행 파일 배치 정리
+
+### 14.1 개발 환경에서의 구조
+
+- 소스 코드는 모두 Git 리포지토리 루트 하위에 위치합니다.
+  - 애플리케이션 엔트리포인트: [`cmd/epdcal/main.go`](cmd/epdcal/main.go:1)
+  - 라이브러리/도메인 로직: [`internal/`](internal:1) 이하
+  - 외부 C 드라이버: [`waveshare/`](waveshare:1)
+  - 배포 스크립트/서비스 정의: [`systemd/`](systemd:1)
+  - 문서: [`README.md`](README.md:1), [`progress.md`](progress.md:1)
+  - 모듈 정의: [`go.mod`](go.mod:1)
+
+- 개발 중 빌드 결과물(실행 파일 `epdcal`)은 일반적으로 리포지토리 루트에 생성합니다:
+
+  ```bash
+  go build -o epdcal ./cmd/epdcal
+  ```
+
+  이 실행 파일을 직접 실행하거나, systemd 서비스 설치 시 `/usr/local/bin/epdcal` 로 복사합니다.
+
+### 14.2 운영 환경에서의 배치
+
+- 바이너리: `/usr/local/bin/epdcal`
+- 설정: `/etc/epdcal/config.yaml`
+- 런타임 데이터/캐시: `/var/lib/epdcal/`
+  - `ics-cache/` (ETag/Last-Modified, ICS 본문)
+  - `preview.png`
+  - `black.bin`, `red.bin` (선택, `--dump` 사용 시)
+- 로그:
+  - systemd 서비스로 실행 시 journald 로 출력
+  - 필요 시 `/var/log/syslog` 나 `journalctl -u epdcal` 로 조회
+
+폴더와 파일 위치는 [`internal/config/config.go`](internal/config/config.go:1) 및 [`cmd/epdcal/main.go`](cmd/epdcal/main.go:1) 의 기본 상수/플래그로 정의할 예정입니다.
+
+---
+
+## 15. Makefile 개요 (빌드/테스트/배포 자동화)
+
+프로젝트 루트에 [`Makefile`](Makefile:1) 을 두고, 반복적인 빌드/테스트/배포 작업을 단순화합니다. (아래는 계획/설계 내용이며, 실제 Makefile 구현 시 이 구조를 따릅니다.)
+
+### 15.1 주요 타겟 설계
+
+- `make build`  
+  - 현재 호스트 환경(개발 머신)용 `epdcal` 빌드
+  - 내부 명령: `go build -o epdcal ./cmd/epdcal`
+
+- `make build-pi`  
+  - Raspberry Pi (32bit ARM) 용 바이너리 빌드
+  - 내부 명령:
+    - `GOOS=linux GOARCH=arm GOARM=7 go build -o epdcal ./cmd/epdcal`
+
+- `make build-pi64`  
+  - Raspberry Pi 64bit(aarch64) 용 바이너리 빌드
+  - 내부 명령:
+    - `GOOS=linux GOARCH=arm64 go build -o epdcal ./cmd/epdcal`
+
+- `make test`  
+  - 전체 Go 테스트 실행
+  - 내부 명령:
+    - `go test ./...`
+
+- `make lint` (선택)  
+  - go vet 또는 golangci-lint 등을 이용한 정적 분석
+  - 초기 버전에서는 `go vet ./...` 정도로 시작 가능
+
+- `make install`  
+  - 빌드 후 `/usr/local/bin/epdcal` 로 복사
+  - `/etc/epdcal` 및 `/var/lib/epdcal` 디렉터리 생성/권한 설정
+  - `systemd/epdcal.service` 를 `/etc/systemd/system/` 에 설치
+
+- `make run`  
+  - 개발용 실행 (`--render-only --dump` 와 함께 실행하는 식으로 구성 가능)
+
+- `make clean`  
+  - 빌드 산출물(`epdcal`, `black.bin`, `red.bin`, `preview.png` 등) 제거
+
+### 15.2 예시 Makefile 스니펫 (설계용)
+
+> 실제 [`Makefile`](Makefile:1) 에는 아래와 유사한 내용이 들어갈 예정입니다.
+
+```make
+BINARY := epdcal
+PKG := ./cmd/epdcal
+
+build:
+	go build -o $(BINARY) $(PKG)
+
+build-pi:
+	GOOS=linux GOARCH=arm GOARM=7 go build -o $(BINARY) $(PKG)
+
+build-pi64:
+	GOOS=linux GOARCH=arm64 go build -o $(BINARY) $(PKG)
+
+test:
+	go test ./...
+
+run:
+	./$(BINARY) --render-only --dump
+
+clean:
+	rm -f $(BINARY) black.bin red.bin preview.png
+```
+
+운영 환경 설치/서비스 등록용 타겟(`install`, `systemd-install` 등)은 프로젝트 요구에 맞춰 추가합니다.
+
+---
+
+## 16. 로깅 전략
+
+### 16.1 기본 로깅 방향
+
+- 모든 서비스 로직은 **표준 출력/표준 에러** 로 로그를 남기고, systemd 환경에서는 journald 가 이를 수집하도록 합니다.
+- 로그 라이브러리는 Go 1.25.5 기준:
+  - 초기에는 표준 라이브러리 `log` 패키지를 사용
+  - 필요 시 간단한 래퍼를 두어 로그 레벨, 태그, 구조화 필드를 지원
+
+예상 로깅 인터페이스(설계):
+
+```go
+// internal/log/log.go (예정)
+func Info(msg string, kv ...any)
+func Error(msg string, err error, kv ...any)
+func Debug(msg string, kv ...any)
+```
+
+각 함수는 `[timestamp] [level] [component] message key=value ...` 형태로 출력합니다.
+
+### 16.2 민감 정보 취급
+
+- ICS URL 은 **절대 전체를 로그에 남기지 않음**
+  - 일부 host 정보나 해시를 사용해 식별만 가능하게 함
+  - 예: `https://private.example.com/cal.ics` → `ics://private.example.com/... (redacted)`
+- 이벤트 제목/내용 등도 디버그 모드가 아닌 이상 상세히 출력하지 않도록 주의
+  - 에러 상황에서는 UID, 시작시각 등 비식별 정보 중심으로 로깅
+
+### 16.3 컴포넌트 별 로깅 예시
+
+- ICS Fetch:
+  - level=INFO: fetch 시작/성공/304 not modified
+  - level=ERROR: HTTP 에러, 타임아웃, 응답 파싱 실패
+- ICS Parse/Expand:
+  - level=ERROR: ICS 문법 에러, 지원하지 않는 RRULE, VTIMEZONE 해석 실패
+  - level=DEBUG: 특정 이벤트/occurrence 의 timestamp 디버그 정보 (`--dump` 또는 디버그 모드에서만)
+- Render:
+  - level=INFO: 렌더 시작/완료, 소요 시간
+  - level=ERROR: 폰트 로드 실패, 이미지 변환 실패 등
+- EPD:
+  - level=INFO: Init/Clear/Display/Sleep 호출
+  - level=ERROR: C 드라이버에서 에러 리턴, 하드웨어 통신 문제
+
+### 16.4 systemd/journald 와의 연동
+
+- 서비스가 journald 를 사용하는 환경(Raspbian systemd)에서는:
+  - `ExecStart` 에 특별한 redirection 없이 `epdcal` 실행
+  - `journalctl -u epdcal` 을 통해 로그 확인
+  - 필요 시 `SyslogIdentifier=epdcal` 등 추가 설정 가능
+
+---
+
+## 17. 요약
+
+- 폴더 구조는 `cmd/`, `internal/`, `waveshare/`, `systemd/` 를 중심으로 구성하며, 실행 바이너리 `epdcal` 은 루트에서 빌드 후 `/usr/local/bin/epdcal` 로 배포합니다.
+- [`Makefile`](Makefile:1) 을 통해 빌드/테스트/설치/정리를 자동화할 계획입니다.
+- 로깅은 표준 출력/에러 + journald 조합을 기본으로 하며, 민감 정보(ICS URL 등)는 반드시 마스킹하여 기록합니다.
+
+이 문서를 기준으로 실제 코드, Makefile, 로깅 유틸리티를 단계적으로 구현해 나가면 됩니다.

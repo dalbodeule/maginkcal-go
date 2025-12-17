@@ -1,5 +1,7 @@
 # EPD ICS Calendar – Development Progress
 
+_Last updated: 2025-12-17_
+
 ## 1. Project Overview
 
 Target: Single Go daemon for Raspberry Pi that:
@@ -28,6 +30,7 @@ Planned repository layout (relative to project root):
 - [`systemd/epdcal.service`](systemd/epdcal.service) – systemd unit file.
 - [`README.md`](README.md) – Main documentation.
 - [`progress.md`](progress.md) – This progress and design tracking document.
+- [`Makefile`](Makefile) – Build/test/install automation.
 
 ## 2. Major Workstreams & Status
 
@@ -39,24 +42,43 @@ Planned repository layout (relative to project root):
 
 ### 2.1 Project Bootstrapping
 
-- [ ] Initialize Go modules and base `cmd/epdcal` skeleton.
-- [ ] Add minimal logging and signal handling (graceful shutdown).
-- [ ] Define global configuration & state wiring.
+- [x] Initialize Go modules and base `cmd/epdcal` skeleton.
+  - [`go.mod`](go.mod) with `module epdcal` and `go 1.25.5`.
+  - [`cmd/epdcal/main.go`](cmd/epdcal/main.go) created as main entrypoint.
+- [x] Add minimal logging and signal handling (graceful shutdown).
+  - [`internal/log/log.go`](internal/log/log.go) implements leveled logger (DEBUG/INFO/ERROR) to stderr.
+  - `main()` uses context + SIGINT/SIGTERM handling and logs start/exit.
+- [x] Define global configuration & state wiring.
+  - [`internal/config/config.go`](internal/config/config.go) defines `Config` / `ICSConfig` / `BasicAuthConfig`.
+  - `cmd/epdcal/main.go` loads config via `config.Load`, applies `--listen` override, logs effective config.
 
 ### 2.2 Configuration & Persistence
 
-- [ ] Implement YAML config loader/saver in [`internal/config/config.go`](internal/config/config.go).
-  - Default location `/etc/epdcal/config.yaml` overridable via `--config`.
-  - Reasonable defaults (listen `127.0.0.1:8080`, timezone from system, 15 min refresh, 7-day horizon).
-- [ ] Ensure first-run behavior:
-  - If config missing, create with defaults and set file permissions 0600.
-  - Log and print URL for Web UI.
-- [ ] Design config schema:
-  - List of ICS URLs (with optional display name / calendar ID).
-  - Refresh interval (minutes).
-  - Local timezone (IANA).
-  - Display options (range in days, all-day section on/off, red highlight keywords, etc.).
-  - Optional basic-auth credentials.
+- [x] Implement YAML config loader/saver in [`internal/config/config.go`](internal/config/config.go).
+  - Uses `gopkg.in/yaml.v3` for marshaling.
+  - `Load(path)`:
+    - If file does not exist:
+      - Creates parent directory if needed (0700).
+      - Writes `DefaultConfig()` with `Save` (0600 perms).
+      - Returns the default config.
+    - If file exists:
+      - Reads YAML, unmarshals into `Config`, then `Normalize()` to fill defaults.
+  - `Save(path, cfg)`:
+    - Ensures parent directory exists (0700).
+    - Normalizes config.
+    - Marshals to YAML.
+    - Writes atomically via temp file + `os.Rename`.
+    - Ensures final file permissions are 0600.
+  - `(*Config).Save(path)` convenience method wraps `Save(path, c)`.
+- [x] Ensure first-run behavior:
+  - When the config file is missing, `Load(path)`:
+    - Instantiates `DefaultConfig()`.
+    - Persists it immediately via `Save(path, cfg)` with 0600 permission.
+    - Returns the config so the daemon and Web UI can start using defaults.
+- [x] Design config schema:
+  - Schema modeled in `Config`:
+    - `Listen`, `Timezone`, `RefreshMinutes`, `HorizonDays`, `ShowAllDay`, `HighlightRed`, `ICS`, `BasicAuth`.
+  - `Normalize()` ensures backwards compatibility / sane defaults even if some fields are missing in YAML.
 - [ ] Implement runtime cache directory under `/var/lib/epdcal/`:
   - Per-ICS HTTP cache metadata (ETag, Last-Modified).
   - Last rendered image buffers and/or PNG preview.
@@ -188,7 +210,7 @@ Planned repository layout (relative to project root):
 - [ ] Endpoints:
   - `GET /` – settings + status HTML UI.
   - `GET /api/config` – return current config as JSON.
-  - `POST /api/config` – update config (with validation and persistence).
+  - `POST /api/config` – update config (with validation and persistence using `config.Save`).
   - `POST /api/refresh` – trigger fetch + render + display.
   - `POST /api/render` – trigger fetch + render (no display).
   - `GET /preview.png` – serve last rendered preview.
@@ -235,14 +257,14 @@ Planned repository layout (relative to project root):
 
 ## 4. Next Immediate Steps
 
-Planned initial sequence:
+Planned next sequence (post-2.2 config persistence):
 
-1. Bootstrap Go module and CLI skeleton in [`cmd/epdcal/main.go`](cmd/epdcal/main.go).
-2. Implement configuration loader/saver in [`internal/config/config.go`](internal/config/config.go), including default generation.
-3. Implement basic HTTP server stub in [`internal/web/web.go`](internal/web/web.go) with `/health` and `/` returning a placeholder page.
-4. Integrate ICS fetching and caching in [`internal/ics/fetch.go`](internal/ics/fetch.go) with logging-only usage.
-5. Add ICS parsing and minimal one-off event expansion path in [`internal/ics/parse.go`](internal/ics/parse.go) and [`internal/ics/expand.go`](internal/ics/expand.go), plus first unit tests.
-6. Design and implement minimal text-only rendering in [`internal/render/render.go`](internal/render/render.go) and NRGBA->packed planes in [`internal/convert/pack.go`](internal/convert/pack.go).
-7. Wire up EPD integration in [`internal/epd/epd.go`](internal/epd/epd.go) and [`internal/epd/epd_cgo.go`](internal/epd/epd_cgo.go) with `--render-only` support for development without hardware.
+1. Add basic HTTP server stub in [`internal/web/web.go`](internal/web/web.go) with `/health` and `/` placeholder page, using `Config.Listen` and optional BasicAuth (stub).
+2. Integrate ICS fetching and caching skeleton in [`internal/ics/fetch.go`](internal/ics/fetch.go) with logging-only usage and placeholder in-memory cache.
+3. Add ICS parsing and minimal one-off event expansion path in [`internal/ics/parse.go`](internal/ics/parse.go) and [`internal/ics/expand.go`](internal/ics/expand.go), plus first unit tests + testdata fixtures.
+4. Design and implement minimal text-only rendering in [`internal/render/render.go`](internal/render/render.go) and NRGBA->packed planes in [`internal/convert/pack.go`](internal/convert/pack.go).
+5. Wire up EPD integration in [`internal/epd/epd.go`](internal/epd/epd.go) and [`internal/epd/epd_cgo.go`](internal/epd/epd_cgo.go) with `--render-only` support for development without hardware.
+6. Flesh out Web UI endpoints (`/api/config`, `/api/render`, `/api/refresh`, `/preview.png`) and hook them into the core pipeline.
+7. Implement runtime cache directory usage under `/var/lib/epdcal/` for ICS HTTP metadata and rendered previews.
 
 This document should be updated as tasks are completed or requirements evolve.
