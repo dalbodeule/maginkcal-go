@@ -22,11 +22,13 @@ var (
 	minLevel   = LevelInfo
 )
 
-// initLogger initializes the global logger to write to stderr with timestamps.
+// initLogger initializes the global logger to write to stderr.
+// We disable stdlog's own timestamps because we prepend our own RFC3339Nano
+// timestamp in logWithLevel, to avoid duplicated date/time in output.
 func initLogger() {
 	loggerOnce.Do(func() {
-		logger = stdlog.New(os.Stderr, "", stdlog.LstdFlags|stdlog.Lmicroseconds)
-		// Default minimum level is INFO; can be made configurable later.
+		// No prefix, no flags -> we fully control the line format.
+		logger = stdlog.New(os.Stderr, "", 0)
 		minLevel = LevelInfo
 	})
 }
@@ -58,8 +60,8 @@ func logWithLevel(level Level, msg string, kv ...any) {
 
 	ts := time.Now().Format(time.RFC3339Nano)
 
-	// Basic line format:
-	// 2025-01-01T00:00:00Z [LEVEL] msg key=value ...
+	// Line format:
+	// 2025-01-01T00:00:00.000000000Z [LEVEL] msg key=value ...
 	line := ts + " [" + string(level) + "] " + msg
 
 	// Append structured key-value pairs.
@@ -99,6 +101,5 @@ func formatKVs(kv ...any) string {
 }
 
 func safeSprint(v any) string {
-	// Simpler and correct: rely on fmt.Sprint.
 	return fmt.Sprint(v)
 }

@@ -47,10 +47,18 @@ Planned repository layout (relative to project root):
   - [`cmd/epdcal/main.go`](cmd/epdcal/main.go) created as main entrypoint.
 - [x] Add minimal logging and signal handling (graceful shutdown).
   - [`internal/log/log.go`](internal/log/log.go) implements leveled logger (DEBUG/INFO/ERROR) to stderr.
+  - Custom RFC3339Nano timestamp; stdlib logger flags disabled to avoid duplicate timestamps.
   - `main()` uses context + SIGINT/SIGTERM handling and logs start/exit.
 - [x] Define global configuration & state wiring.
   - [`internal/config/config.go`](internal/config/config.go) defines `Config` / `ICSConfig` / `BasicAuthConfig`.
   - `cmd/epdcal/main.go` loads config via `config.Load`, applies `--listen` override, logs effective config.
+  - CLI flags (현재 구현됨):
+    - `--config`
+    - `--listen`
+    - `--once`
+    - `--render-only` (예약)
+    - `--dump` (예약)
+    - `--debug` (개발용 로컬 경로 사용)
 
 ### 2.2 Configuration & Persistence
 
@@ -85,30 +93,38 @@ Planned repository layout (relative to project root):
 
 ### 2.3 ICS Fetching & HTTP Caching
 
-- [ ] Implement ICS fetcher in [`internal/ics/fetch.go`](internal/ics/fetch.go):
-  - Periodic fetch based on refresh interval.
-  - On-demand fetch via Web UI (`/api/refresh`).
-  - HTTP conditional requests:
-    - Store ETag and Last-Modified per URL.
-    - Set `If-None-Match` / `If-Modified-Since` when available.
-    - Treat 304 as "no-change" and reuse cached ICS body.
-- [ ] Add redaction utilities so logs never print full ICS URLs.
-- [ ] Error-handling:
-  - Errors must not crash daemon.
-  - On fetch failure, keep previous successful ICS data and last rendered image.
+- [x] Implement ICS fetcher in [`internal/ics/fetch.go`](internal/ics/fetch.go).
+  - `Fetcher` with `FetchAll` / `FetchOne`:
+    - Uses `If-None-Match` / `If-Modified-Since` with ETag / Last-Modified.
+    - Caches responses under `/var/lib/epdcal/ics-cache` (또는 상대 경로 fallback) as:
+      - `meta.json` (URL, ETag, Last-Modified, UpdatedAt)
+      - `body.ics` (ICS 본문)
+    - On 304 or network/HTTP errors:
+      - If cached body exists, logs error and falls back to cache.
+      - If no cache, 에러 반환.
+- [x] Add redaction utilities so logs never print full ICS URLs.
+  - `redactURL()` masks paths/query, logging only scheme+host and `/(redacted)`.
+  - `cmd/epdcal/main.go` 에서는 ID 기반으로만 URL을 간접적으로 표현(`ics://source(id)`).
+- [x] Error-handling:
+  - Errors from individual sources logged via `log.Error` and aggregated.
+  - Network/HTTP errors do not crash the daemon; last good cached ICS is reused where possible.
 
 ### 2.4 ICS Parsing, Timezones, & Model
 
-- [ ] Select and vendor an ICS parsing library in [`internal/ics/parse.go`](internal/ics/parse.go) (or thin wrapper).
-- [ ] Parse:
-  - VCALENDAR/VEVENT/VTIMEZONE.
-  - DTSTART/DTEND (DATE and DATE-TIME).
-  - RRULE, EXDATE, RDATE, RECURRENCE-ID, UID.
+- [x] Select and vendor an ICS parsing library in [`internal/ics/parse.go`](internal/ics/parse.go).
+  - Uses `github.com/arran4/golang-ical`.
+- [-] Parse:
+  - VEVENT 파싱 구현:
+    - `UID`, `SEQUENCE`, `SUMMARY`, `DESCRIPTION`, `LOCATION`.
+    - `DTSTART` / `DTEND` via `ve.GetStartAt()` / `ve.GetEndAt()` (VTIMEZONE/TZID 해석은 라이브러리 의존).
+    - All-day 판별: `VALUE=DATE` 또는 값에 `T` 없음.
+    - `TZID` 파라미터에서 `StartTZ` / `EndTZ` 추출.
+    - `RRULE` 문자열을 그대로 `RawRRule` 필드에 저장.
+    - `EXDATE` (`EXDATE` 프로퍼티들) 를 `parseICSTime` 으로 `[]time.Time` 에 저장.
+    - `RECURRENCE-ID` 를 `Recurrence`/`IsOverride` 로 저장.
+  - VTIMEZONE 블록 자체는 라이브러리에 맡기고, 추후 확장에서 display timezone 정규화.
 - [ ] Build an internal event model in [`internal/model/model.go`](internal/model/model.go):
-  - Calendar ID / source URL tag.
-  - UID and recurrence instance key.
-  - All-day vs timed events.
-  - Original timezone.
+  - 캘린더 병합/정렬용 도메인 구조체는 아직 미구현.
 
 ### 2.5 Recurrence Expansion & Exceptions
 
@@ -223,10 +239,17 @@ Planned repository layout (relative to project root):
 
 ### 2.12 Scheduler & Daemon Behavior
 
-- [ ] Implement scheduler loop in [`cmd/epdcal/main.go`](cmd/epdcal/main.go):
-  - Periodic refresh based on config.
-  - Respect manual triggers and recompute "next refresh".
-  - Clean shutdown on SIGTERM / SIGINT.
+- [-] Implement scheduler loop in [`cmd/epdcal/main.go`](cmd/epdcal/main.go):
+  - [x] Periodic refresh based on config:
+    - Uses `RefreshMinutes` (fallback 15분) 로 ticker 구동.
+  - [ ] Respect manual triggers and recompute "next refresh" (Web UI 연동 이후).
+  - [x] Clean shutdown on SIGTERM / SIGINT using context + signal.
+  - [x] `--once`:
+    - 한 번 `runRefreshCycle` 실행 후 종료.
+  - [x] `--debug`:
+    - 기본 `--config` 가 `/etc/epdcal/config.yaml` 인 경우, 디버그 모드에서는 `./config.yaml` 을 사용.
+    - 캐시는 `/var/lib/epdcal/ics-cache` 대신 `./cache/ics-cache` 를 사용.
+    - 개발/디버그 환경에서 root 권한 없이 ICS Fetch/Parse 테스트 가능.
 - [ ] Ensure that:
   - Fetch/render errors do not kill the process.
   - Last successful image is preserved and continues to be used.
@@ -257,11 +280,11 @@ Planned repository layout (relative to project root):
 
 ## 4. Next Immediate Steps
 
-Planned next sequence (post-2.2 config persistence):
+Planned next sequence (post-ICS Fetch/Parse wiring and debug mode):
 
 1. Add basic HTTP server stub in [`internal/web/web.go`](internal/web/web.go) with `/health` and `/` placeholder page, using `Config.Listen` and optional BasicAuth (stub).
-2. Integrate ICS fetching and caching skeleton in [`internal/ics/fetch.go`](internal/ics/fetch.go) with logging-only usage and placeholder in-memory cache.
-3. Add ICS parsing and minimal one-off event expansion path in [`internal/ics/parse.go`](internal/ics/parse.go) and [`internal/ics/expand.go`](internal/ics/expand.go), plus first unit tests + testdata fixtures.
+2. Add ICS parsing unit tests and fixtures in `internal/ics/parse_test.go` + `internal/ics/testdata/`.
+3. Implement recurrence expansion in [`internal/ics/expand.go`](internal/ics/expand.go) and minimal `internal/model/model.go` for rendering input.
 4. Design and implement minimal text-only rendering in [`internal/render/render.go`](internal/render/render.go) and NRGBA->packed planes in [`internal/convert/pack.go`](internal/convert/pack.go).
 5. Wire up EPD integration in [`internal/epd/epd.go`](internal/epd/epd.go) and [`internal/epd/epd_cgo.go`](internal/epd/epd_cgo.go) with `--render-only` support for development without hardware.
 6. Flesh out Web UI endpoints (`/api/config`, `/api/render`, `/api/refresh`, `/preview.png`) and hook them into the core pipeline.
