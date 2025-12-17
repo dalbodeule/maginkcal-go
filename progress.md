@@ -113,7 +113,7 @@ Planned repository layout (relative to project root):
 
 - [x] Select and vendor an ICS parsing library in [`internal/ics/parse.go`](internal/ics/parse.go).
   - Uses `github.com/arran4/golang-ical`.
-- [-] Parse:
+- [x] Parse:
   - VEVENT 파싱 구현:
     - `UID`, `SEQUENCE`, `SUMMARY`, `DESCRIPTION`, `LOCATION`.
     - `DTSTART` / `DTEND` via `ve.GetStartAt()` / `ve.GetEndAt()` (VTIMEZONE/TZID 해석은 라이브러리 의존).
@@ -122,32 +122,42 @@ Planned repository layout (relative to project root):
     - `RRULE` 문자열을 그대로 `RawRRule` 필드에 저장.
     - `EXDATE` (`EXDATE` 프로퍼티들) 를 `parseICSTime` 으로 `[]time.Time` 에 저장.
     - `RECURRENCE-ID` 를 `Recurrence`/`IsOverride` 로 저장.
-  - VTIMEZONE 블록 자체는 라이브러리에 맡기고, 추후 확장에서 display timezone 정규화.
-- [ ] Build an internal event model in [`internal/model/model.go`](internal/model/model.go):
-  - 캘린더 병합/정렬용 도메인 구조체는 아직 미구현.
+- [x] Build an internal event model in [`internal/model/model.go`](internal/model/model.go):
+  - `Event`: 원본 이벤트 메타(필요 시 확장 용도).
+  - `Occurrence`: 확장된 단일 occurrence:
+    - `SourceID`, `UID`, `InstanceKey`, `Summary`, `Location`, `AllDay`, `Start`, `End` (display timezone).
 
 ### 2.5 Recurrence Expansion & Exceptions
 
-- [ ] Implement recurrence expansion in [`internal/ics/expand.go`](internal/ics/expand.go) using a library such as `rrule-go` or a minimal custom implementation:
-  - RRULE basic support: FREQ=DAILY/WEEKLY/MONTHLY/YEARLY.
-  - Common modifiers: BYDAY, BYMONTHDAY, INTERVAL, COUNT, UNTIL.
-- [ ] Handle exceptions and overrides:
-  - `EXDATE` removal of generated occurrences.
-  - `RECURRENCE-ID` override of specific instances:
-    - Collect override VEVENTs keyed by (UID, recurrence-id timestamp).
-    - Replace corresponding base occurrence with override details.
-- [ ] All-day event semantics:
-  - DATE values mapped to local date range `[00:00, next day 00:00)` in display timezone.
+- [x] Implement recurrence expansion in [`internal/ics/expand.go`](internal/ics/expand.go) using `github.com/teambition/rrule-go`:
+  - `ExpandConfig`:
+    - `DisplayLocation` (표시용 타임존, `nil` 시 `time.Local`)
+    - `RangeStart`, `RangeEnd` – 확장 윈도우
+    - `MaxOccurrencesPerEvent` – 기본 5000, 무한 루프 방지
+  - `ExpandOccurrences([]ParsedEvent, ExpandConfig) (ExpandResult, error)`:
+    - UID 별로 base event / override event 분리
+    - 비반복 이벤트:
+      - `[Start, End]` 와 `[RangeStart, RangeEnd]` 겹칠 때만 occurrence 생성
+      - 동일 start 의 override(RECURRENCE-ID) 가 있으면 교체
+    - 반복 이벤트:
+      - `StrToRRule(ev.RawRRule)` → `RRule`
+      - `Dtstart(ev.Start)`
+      - `Set` 에 `RRule` 및 `EXDATE` 적용
+      - `Set.Between(rangeStart, rangeEnd, true)` 로 발생 시각 계산
+      - 발생 개수가 cap 초과 시 잘라내고 UID 를 `TruncatedEvents` 에 기록
+      - All-day:
+        - `[date 00:00, 다음날 00:00)` 로 처리
+      - 일반:
+        - 원래 duration (`ev.End - ev.Start`) 유지
+      - 각 발생시각마다 override(RECURRENCE-ID) 를 검사하여 대체
+      - `makeOccurrence` 로 display timezone 기준 `model.Occurrence` 생성
+- [ ] All-day event semantics (정교한 TZ/P3D 처리 등)는 추후 렌더링/테스트 단계에서 추가 검증 예정.
 - [ ] Timezone normalization:
-  - Use `config.Timezone` as canonical display zone.
-  - Interpret:
-    - `DTSTART;TZID=...` using ICS VTIMEZONE when possible; otherwise IANA mapping or system tz.
-    - `DTSTART:...Z` as UTC.
-    - Floating times (no TZ) as local timezone.
-  - Convert all occurrences into display timezone before grouping per day.
-- [ ] Expansion range strategy:
-  - Expand only in `[now - backfill, now + horizon]` (e.g., backfill 1 day, horizon N days).
-  - Hard cap occurrences per event (e.g., 5000) with logging.
+  - 현재는 occurrence 생성 시 display timezone(`DisplayLocation`)으로 변환만 수행.
+  - 세부 DST/복잡한 VTIMEZONE case 는 테스트/보완 필요.
+- [x] Expansion range strategy:
+  - `[RangeStart, RangeEnd]` 윈도우에 대해 RRULE `Between` 사용.
+  - per-event cap(기본 5000) 적용.
 
 ### 2.6 Deduplication & Merge
 
@@ -280,14 +290,13 @@ Planned repository layout (relative to project root):
 
 ## 4. Next Immediate Steps
 
-Planned next sequence (post-ICS Fetch/Parse wiring and debug mode):
+Planned next sequence (post-ICS Fetch/Parse/Expand wiring):
 
-1. Add basic HTTP server stub in [`internal/web/web.go`](internal/web/web.go) with `/health` and `/` placeholder page, using `Config.Listen` and optional BasicAuth (stub).
-2. Add ICS parsing unit tests and fixtures in `internal/ics/parse_test.go` + `internal/ics/testdata/`.
-3. Implement recurrence expansion in [`internal/ics/expand.go`](internal/ics/expand.go) and minimal `internal/model/model.go` for rendering input.
-4. Design and implement minimal text-only rendering in [`internal/render/render.go`](internal/render/render.go) and NRGBA->packed planes in [`internal/convert/pack.go`](internal/convert/pack.go).
-5. Wire up EPD integration in [`internal/epd/epd.go`](internal/epd/epd.go) and [`internal/epd/epd_cgo.go`](internal/epd/epd_cgo.go) with `--render-only` support for development without hardware.
-6. Flesh out Web UI endpoints (`/api/config`, `/api/render`, `/api/refresh`, `/preview.png`) and hook them into the core pipeline.
-7. Implement runtime cache directory usage under `/var/lib/epdcal/` for ICS HTTP metadata and rendered previews.
+1. Add ICS parsing / expansion unit tests and fixtures in `internal/ics/parse_test.go`, `internal/ics/expand_test.go` + `internal/ics/testdata/`.
+2. Add basic HTTP server stub in [`internal/web/web.go`](internal/web/web.go) with `/health` and `/` placeholder page, using `Config.Listen` and optional BasicAuth (stub).
+3. Design and implement minimal text-only rendering in [`internal/render/render.go`](internal/render/render.go) and NRGBA->packed planes in [`internal/convert/pack.go`](internal/convert/pack.go).
+4. Wire up EPD integration in [`internal/epd/epd.go`](internal/epd/epd.go) and [`internal/epd/epd_cgo.go`](internal/epd/epd_cgo.go) with `--render-only` support for development without hardware.
+5. Flesh out Web UI endpoints (`/api/config`, `/api/render`, `/api/refresh`, `/preview.png`) and hook them into the core pipeline.
+6. Implement runtime cache directory usage under `/var/lib/epdcal/` for ICS HTTP metadata and rendered previews.
 
 This document should be updated as tasks are completed or requirements evolve.

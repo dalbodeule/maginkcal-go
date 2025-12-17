@@ -13,6 +13,7 @@ import (
 	"epdcal/internal/config"
 	ics "epdcal/internal/ics"
 	appLog "epdcal/internal/log"
+	"epdcal/internal/web"
 )
 
 // flagConfig holds CLI flag values.
@@ -66,6 +67,14 @@ func main() {
 	// Root context with cancellation on SIGINT/SIGTERM.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Start HTTP server in background.
+	go func() {
+		if err := web.StartServer(ctx, conf, flags.debug); err != nil {
+			appLog.Error("http server failed", err)
+			cancel()
+		}
+	}()
 
 	// Signal handling.
 	sigCh := make(chan os.Signal, 1)
