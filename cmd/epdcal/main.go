@@ -95,13 +95,12 @@ func main() {
 			os.Exit(1)
 		}
 
-		// If --dump is set, perform a single Chromium-based PNG capture
-		// of the /calendar page for testing.
-		if flags.dump {
-			if err := runCaptureTest(ctx, conf, flags); err != nil {
-				appLog.Error("capture test failed in once mode", err)
-				os.Exit(1)
-			}
+		// 파이프라인의 일부로 /calendar 페이지를 Chromium으로 캡처해서
+		// preview.png를 생성한다. once 모드에서는 캡처 실패 시 프로세스를
+		// 종료하여 문제를 빠르게 드러내도록 한다.
+		if err := runCapturePipeline(ctx, conf, flags); err != nil {
+			appLog.Error("chromium capture failed in once mode", err)
+			os.Exit(1)
 		}
 
 		appLog.Info("once mode completed; exiting")
@@ -118,6 +117,13 @@ func main() {
 	// Initial immediate run.
 	if err := runRefreshCycle(ctx, conf, flags.debug); err != nil {
 		appLog.Error("initial refresh cycle failed", err)
+	} else {
+		// 주기 루프에서도 매 refresh 이후에 /calendar를 Chromium으로 캡처하여
+		// preview.png를 최신 상태로 유지한다. 캡처 실패는 치명적이지 않으므로
+		// 에러만 로그에 남기고 루프는 계속 돈다.
+		if err := runCapturePipeline(ctx, conf, flags); err != nil {
+			appLog.Error("chromium capture failed after initial refresh", err)
+		}
 	}
 
 	ticker := time.NewTicker(interval)
@@ -136,6 +142,10 @@ func main() {
 			appLog.Info("scheduled refresh tick", "time", t.Format(time.RFC3339))
 			if err := runRefreshCycle(ctx, conf, flags.debug); err != nil {
 				appLog.Error("scheduled refresh cycle failed", err)
+				continue
+			}
+			if err := runCapturePipeline(ctx, conf, flags); err != nil {
+				appLog.Error("chromium capture failed after scheduled refresh", err)
 			}
 		}
 	}
@@ -244,15 +254,17 @@ func runRefreshCycle(parentCtx context.Context, conf *config.Config, debug bool)
 	return nil
 }
 
-// runCaptureTest performs a single Chromium-based PNG capture of the
-// /calendar page using the capture.CaptureCalendarPNG helper. This is
-// primarily intended for testing/development, e.g.:
+// runCapturePipeline performs a Chromium-based PNG capture of the
+// /calendar page using the capture.CaptureCalendarPNG helper.
 //
-//	./epdcal --debug --once --dump
+//   - 주기적인 refresh 파이프라인에서 사용되어, 항상 최신 캘린더 뷰를
+//     preview.png 로 유지한다.
+//   - also used in once mode to validate that the whole stack (web + capture)
+//     is working end-to-end.
 //
 // In debug mode it writes to ./cache/preview.png, otherwise to
 // /var/lib/epdcal/preview.png.
-func runCaptureTest(parentCtx context.Context, conf *config.Config, flags flagConfig) error {
+func runCapturePipeline(parentCtx context.Context, conf *config.Config, flags flagConfig) error {
 	// Derive a short-lived context for the capture operation.
 	ctx, cancel := context.WithTimeout(parentCtx, 60*time.Second)
 	defer cancel()
@@ -264,7 +276,7 @@ func runCaptureTest(parentCtx context.Context, conf *config.Config, flags flagCo
 		outPath = "./cache/preview.png"
 	}
 
-	appLog.Info("starting chromium capture test",
+	appLog.Info("starting chromium capture",
 		"url", url,
 		"output", outPath,
 	)
@@ -281,7 +293,7 @@ func runCaptureTest(parentCtx context.Context, conf *config.Config, flags flagCo
 		return err
 	}
 
-	appLog.Info("chromium capture test completed", "output", outPath)
+	appLog.Info("chromium capture completed", "output", outPath)
 	return nil
 }
 
