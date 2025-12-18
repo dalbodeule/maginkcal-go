@@ -47,6 +47,8 @@ export default function CalendarPage() {
     Record<string, OccurrenceDTO[]>
   >({});
   const [batteryPercent, setBatteryPercent] = useState<number | null>(null);
+  const [eventsLoaded, setEventsLoaded] = useState(false);
+  const [batteryLoaded, setBatteryLoaded] = useState(false);
 
   const today = useMemo(() => new Date(), []);
   const now = today; // alias
@@ -85,6 +87,7 @@ export default function CalendarPage() {
 
         // 가장 마지막 업데이트 시각은 클라이언트 기준 fetch 완료 시점으로 사용
         setLastUpdatedAt(new Date());
+        setEventsLoaded(true);
         setError(null);
       } catch (e: any) {
         if (!cancelled) {
@@ -120,6 +123,7 @@ export default function CalendarPage() {
           if (p < 0) p = 0;
           if (p > 100) p = 100;
           setBatteryPercent(p);
+          setBatteryLoaded(true);
         }
       } catch {
         // 배터리 정보는 필수는 아니므로 에러는 UI에 드러내지 않고 무시
@@ -141,15 +145,14 @@ export default function CalendarPage() {
   const weekdayLabels =
     weekStart === "monday" ? WEEKDAYS_MON_FIRST : WEEKDAYS_SUN_FIRST;
 
-  const rangeLabel = `${formatShortDate(startDate)} ~ ${formatShortDate(
-    endDate,
-  )}`;
+  const ready = eventsLoaded && batteryLoaded;
 
   return (
     <div
+      data-ready={ready ? "true" : "false"}
       className={`${nanumGothic.className} min-h-screen bg-slate-100 text-slate-900 flex items-center justify-center overflow-auto`}
     >
-      <main className="w-[1304px] h-[1200px] rounded-xl bg-white shadow-sm px-4 py-5 sm:px-6 sm:py-6 flex flex-col relative">
+      <main className="w-[984px] h-[1308px] rounded-xl bg-white shadow-sm px-4 py-5 sm:px-6 sm:py-6 flex flex-col relative">
         {/* Battery indicator (top-right, 5-step based on FontAwesome semantics) */}
         <BatteryIndicator percent={batteryPercent} />
 

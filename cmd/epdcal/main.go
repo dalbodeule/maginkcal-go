@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"epdcal/internal/capture"
 	"epdcal/internal/config"
 	ics "epdcal/internal/ics"
 	appLog "epdcal/internal/log"
@@ -93,6 +94,16 @@ func main() {
 			appLog.Error("refresh cycle failed in once mode", err)
 			os.Exit(1)
 		}
+
+		// If --dump is set, perform a single Chromium-based PNG capture
+		// of the /calendar page for testing.
+		if flags.dump {
+			if err := runCaptureTest(ctx, conf, flags); err != nil {
+				appLog.Error("capture test failed in once mode", err)
+				os.Exit(1)
+			}
+		}
+
 		appLog.Info("once mode completed; exiting")
 		return
 	}
@@ -230,6 +241,47 @@ func runRefreshCycle(parentCtx context.Context, conf *config.Config, debug bool)
 		"parsed_event_total", totalParsedEvents,
 	)
 
+	return nil
+}
+
+// runCaptureTest performs a single Chromium-based PNG capture of the
+// /calendar page using the capture.CaptureCalendarPNG helper. This is
+// primarily intended for testing/development, e.g.:
+//
+//	./epdcal --debug --once --dump
+//
+// In debug mode it writes to ./cache/preview.png, otherwise to
+// /var/lib/epdcal/preview.png.
+func runCaptureTest(parentCtx context.Context, conf *config.Config, flags flagConfig) error {
+	// Derive a short-lived context for the capture operation.
+	ctx, cancel := context.WithTimeout(parentCtx, 60*time.Second)
+	defer cancel()
+
+	url := "http://" + conf.Listen + "/calendar"
+
+	outPath := "/var/lib/epdcal/preview.png"
+	if flags.debug {
+		outPath = "./cache/preview.png"
+	}
+
+	appLog.Info("starting chromium capture test",
+		"url", url,
+		"output", outPath,
+	)
+
+	opts := capture.CaptureOptions{
+		URL:        url,
+		OutputPath: outPath,
+		Width:      0, // use defaults
+		Height:     0,
+		Timeout:    0,
+	}
+
+	if err := capture.CaptureCalendarPNG(ctx, opts); err != nil {
+		return err
+	}
+
+	appLog.Info("chromium capture test completed", "output", outPath)
 	return nil
 }
 
