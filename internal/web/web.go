@@ -150,10 +150,19 @@ func (s *Server) staticFileServer() http.Handler {
 	})
 }
 
-// handlePreview will later serve the last rendered PNG preview from disk.
-// For now it is a stub to ensure /preview.png is not caught by the static handler.
+// handlePreview serves the last rendered PNG preview from disk.
+// 경로 규칙은 cmd/epdcal/main.go 의 runCapturePipeline 과 동일하게 맞춘다:
+//   - 기본:  /var/lib/epdcal/preview.png
+//   - debug: ./cache/preview.png
 func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "preview not implemented", http.StatusNotImplemented)
+	previewPath := "/var/lib/epdcal/preview.png"
+	if s.debug {
+		previewPath = "./cache/preview.png"
+	}
+
+	// http.ServeFile 가 파일 존재/권한 문제에 대해 적절한 상태코드를 반환해 준다.
+	// (존재하지 않으면 404, 기타 에러는 500 등)
+	http.ServeFile(w, r, previewPath)
 }
 
 // eventsResponse is the JSON response shape for /api/events.

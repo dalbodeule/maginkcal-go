@@ -4,8 +4,12 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"image"
+	"image/draw"
+	"image/png"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -14,7 +18,9 @@ import (
 
 	"epdcal/internal/capture"
 	"epdcal/internal/config"
-	ics "epdcal/internal/ics"
+	"epdcal/internal/convert"
+	"epdcal/internal/epd"
+	"epdcal/internal/ics"
 	appLog "epdcal/internal/log"
 	"epdcal/internal/web"
 )
@@ -89,6 +95,33 @@ func main() {
 		cancel()
 	}()
 
+	// Initialize EPD SPI driver (unless render-only). This will only be
+	// active on linux/arm builds where the epd SPI backend is available.
+	var epdDrv *epd.Driver
+	if !flags.renderOnly {
+		d, err := epd.Init(ctx)
+		if err != nil {
+			appLog.Error("failed to initialize EPD driver; continuing in render-only mode", err)
+		} else {
+			if err := d.InitPanel(); err != nil {
+				appLog.Error("failed to init EPD panel; continuing in render-only mode", err)
+			} else {
+				appLog.Info("epd driver initialized")
+				epdDrv = d
+			}
+		}
+		defer func() {
+			if epdDrv != nil {
+				if err := epdDrv.Sleep(); err != nil {
+					appLog.Error("epd sleep failed", err)
+				}
+				if err := epdDrv.Close(); err != nil {
+					appLog.Error("epd close failed", err)
+				}
+			}
+		}()
+	}
+
 	// Scheduler / single-run behavior.
 	if flags.once {
 		appLog.Info("running in once mode (single refresh cycle)")
@@ -98,10 +131,11 @@ func main() {
 		}
 
 		// 파이프라인의 일부로 /calendar 페이지를 Chromium으로 캡처해서
-		// preview.png를 생성한다. once 모드에서는 캡처 실패 시 프로세스를
-		// 종료하여 문제를 빠르게 드러내도록 한다.
-		if err := runCapturePipeline(ctx, conf, flags); err != nil {
-			appLog.Error("chromium capture failed in once mode", err)
+		// preview.png를 생성하고, PNG → packed plane 변환 후 EPD에 출력한다.
+		// once 모드에서는 캡처/디스플레이 실패 시 프로세스를 종료하여
+		// 문제를 빠르게 드러내도록 한다.
+		if err := runCapturePipeline(ctx, conf, flags, epdDrv); err != nil {
+			appLog.Error("capture/display pipeline failed in once mode", err)
 			os.Exit(1)
 		}
 
@@ -120,8 +154,8 @@ func main() {
 		// 주기 루프에서도 매 refresh 이후에 /calendar를 Chromium으로 캡처하여
 		// preview.png를 최신 상태로 유지한다. 캡처 실패는 치명적이지 않으므로
 		// 에러만 로그에 남기고 루프는 계속 돈다.
-		if err := runCapturePipeline(ctx, conf, flags); err != nil {
-			appLog.Error("chromium capture failed after initial refresh", err)
+		if err := runCapturePipeline(ctx, conf, flags, epdDrv); err != nil {
+			appLog.Error("chromium capture/display failed after initial refresh", err)
 		}
 	}
 
@@ -151,8 +185,8 @@ func main() {
 			appLog.Error("scheduled refresh cycle failed", err)
 			return
 		}
-		if err := runCapturePipeline(ctx, conf, flags); err != nil {
-			appLog.Error("chromium capture failed after scheduled refresh", err)
+		if err := runCapturePipeline(ctx, conf, flags, epdDrv); err != nil {
+			appLog.Error("chromium capture/display failed after scheduled refresh", err)
 		}
 	})
 	if err != nil {
@@ -285,7 +319,7 @@ func runRefreshCycle(parentCtx context.Context, conf *config.Config, debug bool)
 //
 // In debug mode it writes to ./cache/preview.png, otherwise to
 // /var/lib/epdcal/preview.png.
-func runCapturePipeline(parentCtx context.Context, conf *config.Config, flags flagConfig) error {
+func runCapturePipeline(parentCtx context.Context, conf *config.Config, flags flagConfig, drv *epd.Driver) error {
 	// Derive a short-lived context for the capture operation.
 	ctx, cancel := context.WithTimeout(parentCtx, 60*time.Second)
 	defer cancel()
@@ -315,6 +349,64 @@ func runCapturePipeline(parentCtx context.Context, conf *config.Config, flags fl
 	}
 
 	appLog.Info("chromium capture completed", "output", outPath)
+
+	// Load the captured PNG, convert to NRGBA, then pack into black/red planes.
+	f, err := os.Open(outPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	img, err := png.Decode(f)
+	if err != nil {
+		return err
+	}
+
+	var nrgba *image.NRGBA
+	if v, ok := img.(*image.NRGBA); ok {
+		nrgba = v
+	} else {
+		// Convert to NRGBA via draw.Draw.
+		bounds := img.Bounds()
+		tmp := image.NewNRGBA(bounds)
+		draw.Draw(tmp, bounds, img, bounds.Min, draw.Src)
+		nrgba = tmp
+	}
+
+	black, red, err := convert.PackNRGBA(nrgba)
+	if err != nil {
+		return err
+	}
+
+	// If --dump is enabled, write black.bin and red.bin alongside preview.png.
+	if flags.dump {
+		dir := filepath.Dir(outPath)
+		blackPath := filepath.Join(dir, "black.bin")
+		redPath := filepath.Join(dir, "red.bin")
+
+		if err := os.WriteFile(blackPath, black, 0o644); err != nil {
+			appLog.Error("failed to write black.bin", err, "path", blackPath)
+		} else {
+			appLog.Info("wrote black.bin", "path", blackPath)
+		}
+		if err := os.WriteFile(redPath, red, 0o644); err != nil {
+			appLog.Error("failed to write red.bin", err, "path", redPath)
+		} else {
+			appLog.Info("wrote red.bin", "path", redPath)
+		}
+	}
+
+	// If render-only or no EPD driver is available, stop after generating planes.
+	if flags.renderOnly || drv == nil {
+		return nil
+	}
+
+	appLog.Info("sending frame to EPD hardware")
+	if err := drv.Display(black, red); err != nil {
+		return err
+	}
+
+	appLog.Info("EPD frame update completed")
 	return nil
 }
 

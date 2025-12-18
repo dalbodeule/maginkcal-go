@@ -58,6 +58,9 @@
     - `GET /health` – 헬스체크
     - `GET /api/events` – ICS fetch/parse/expand 결과를 기반으로 occurrence JSON 반환
     - `GET /api/battery` – mock 배터리 정보 반환
+    - `GET /preview.png` – 마지막 캡처된 Preview PNG 서빙
+      - 기본: `/var/lib/epdcal/preview.png`
+      - `--debug`: `./cache/preview.png`
   - 정적 Web UI (Next.js 빌드 결과)를 embed FS로 서빙:
     - `/`, `/calendar` 등
     - `/api/*`, `/preview.png` 등은 정적 서빙에서 제외
@@ -121,7 +124,7 @@
         - `TurnOnDisplay()` ↔ `EPD_12in48B_TurnOnDisplay`
         - `Sleep()` ↔ `EPD_12in48B_Sleep`
     - 현재:
-      - **하드웨어 시퀀스는 대부분 포팅 완료**, 아직 main 파이프라인과는 미연결 상태 (TODO)
+d      - **SPI 드라이버가 캡처 파이프라인과 연결되어**, cron/once 마다 `/calendar` → PNG → packed plane → EPD 표시까지 end-to-end 동작
 
 ### 0.2 아직 미구현 / 진행 중인 부분
 
@@ -129,13 +132,9 @@
   - `internal/ics/testdata/*.ics` fixture 및 `parse_test.go` / `expand_test.go` 작성
 - TZID/VTIMEZONE 및 DST 경계에 대한 **정확한 검증**:
   - 현재 로직은 구현되어 있으나, 다양한 타임존/경계 케이스에 대한 테스트 미완료
-- PNG → black/red packed plane 변환:
-  - [`internal/convert/pack.go`](internal/convert/pack.go) 구현 필요
-- EPD SPI 드라이버를 main 파이프라인에 연결:
-  - [`cmd/epdcal/main.go`](cmd/epdcal/main.go)에서 `Display`/`Sleep` 호출 wiring
-  - `--render-only` 처리 포함
-- 정식 display 파이프라인 통합:
-  - refresh cron → ICS expand → `/calendar` 렌더 → 캡처 → PNG → packed plane → EPD 표시까지 연결
+- display 파이프라인 세부 튜닝/에러 핸들링:
+  - ICS fetch와 `/api/events` 확장, `/calendar` 렌더, 캡처/EPD 간 중복 fetch 최소화
+  - 실패 시 마지막 성공 프레임으로 graceful fallback
 - 설정/관리용 Web API:
   - `/api/config` (GET/POST), `/api/refresh`, `/api/render`, `GET /preview.png` (실제 파일 제공)
 - 런타임 캐시 확장:
@@ -452,17 +451,18 @@ systemd/epdcal.service
 
 ## 11. 앞으로의 작업(TODO, 고수준)
 
-- [-] ICS fetch/parse/expand 기본 구현 및 unit test 완료  
+- [-] ICS fetch/parse/expand 기본 구현 및 unit test 완료
       - **현황**: fetch/parse/expand 코어 로직 구현 완료, unit test/fixture는 미작성
-- [-] TZID/VTIMEZONE 처리 및 표시용 타임존 변환 검증  
+- [-] TZID/VTIMEZONE 처리 및 표시용 타임존 변환 검증
       - **현황**: 로직 구현은 되어 있으나 다양한 타임존/경계 케이스에 대한 테스트 미완료
 - [x] Web UI(`/calendar`) 기본 레이아웃 및 이벤트 리스트 구현
-- [x] headless Chromium(chromedp) 기반 PNG 캡처 구현  
+- [x] headless Chromium(chromedp) 기반 PNG 캡처 구현
       - `--once --dump` 또는 정규 스케줄에서 `/calendar` → `preview.png` 캡처
 - [x] 주기 스케줄을 cron string(`config.refresh`) 기반으로 변경 (`robfig/cron/v3`)
-- [ ] PNG → black/red packed plane 변환(`internal/convert/pack.go`)
+- [x] PNG → black/red packed plane 변환(`internal/convert/pack.go`)
 - [x] Waveshare C 드라이버를 참고하여 periph.io 기반 SPI 구현(`internal/epd/epd_spi.go`)
-- [ ] display 파이프라인 통합 (fetch → expand → render → capture → pack → display)
-- [ ] Web API (`/api/config`, `/api/refresh`, `/api/render`, `/preview.png`) 구현
+- [x] display 파이프라인 통합 (cron/once → `/calendar` 캡처 → PNG → pack → EPD Display)
+- [x] Preview 이미지 HTTP 서빙 (`GET /preview.png`) 구현
+- [ ] Web API (`/api/config`, `/api/refresh`, `/api/render`) 구현
 - [ ] systemd 서비스 유닛(`systemd/epdcal.service`) 작성
 - [x] README에 known limitations / troubleshooting 정리

@@ -1,5 +1,3 @@
-//go:build linux && arm
-
 // Package epd provides a SPI-based driver for the Waveshare 12.48" tri-color
 // e-paper (B) panel, implemented in pure Go using periph.io instead of the
 // original C SDK. This file focuses on the low-level DEV_* layer (GPIO/SPI)
@@ -12,11 +10,11 @@ import (
 	"fmt"
 	"time"
 
-	"periph.io/x/periph/conn/gpio"
-	"periph.io/x/periph/conn/gpio/gpioreg"
-	"periph.io/x/periph/conn/spi"
-	"periph.io/x/periph/conn/spi/spireg"
-	"periph.io/x/periph/host"
+	"periph.io/x/conn/v3/gpio"
+	"periph.io/x/conn/v3/gpio/gpioreg"
+	"periph.io/x/conn/v3/spi"
+	"periph.io/x/conn/v3/spi/spireg"
+	"periph.io/x/host/v3"
 )
 
 // NOTE: These BCM pin numbers are taken from the Waveshare DEV_Config.h
