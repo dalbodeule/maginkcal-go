@@ -1,75 +1,73 @@
-# epdcal – ICS 기반 E-Paper 캘린더 (Raspberry Pi)
+# epdcal – ICS 기반 E‑Paper 캘린더 (Raspberry Pi / Waveshare 12.48" B Panel)
 
-Raspberry Pi(ARM, Raspbian)에서 **Waveshare 12.48" tri‑color e-paper (B)** 패널(1304x984)을 구동하여, 하나 이상의 **ICS(iCalendar) 구독**으로부터 캘린더를 렌더링하고 표시하는 Go 애플리케이션입니다.  
+`epdcal` 은 Raspberry Pi (Raspbian/ARM) 에서 동작하는 단일 Go 애플리케이션으로,  
+Waveshare 12.48" tri‑color e‑paper (B) 패널(1304x984)에 **ICS(iCalendar) 구독 캘린더**를 표시한다.
 
-- 여러 ICS URL 구독 (OAuth / Google API 사용 안 함)
-- TZID/VTIMEZONE, RRULE, EXDATE, RECURRENCE-ID, all-day 이벤트 처리
-- 로컬 Web UI로 설정 관리 및 Preview/Refresh
-- Headless Chromium을 이용해 Web UI(`/calendar`)를 캡처하여 EPD로 전송
+- 여러 개의 ICS URL 구독
+- 타임존(TZID/VTIMEZONE), 반복(RRULE), 예외(EXDATE), override(RECURRENCE-ID), all‑day 이벤트 처리
+- 로컬 Web UI 로 설정/상태 확인 및 수동 Refresh/Render
+- cgo 를 통해 Waveshare C 드라이버(`EPD_12in48B.h`) 호출
+- Google API / OAuth / token.pickle / Python / PIL 등은 **전혀 사용하지 않음**
 
----
-
-## 1. 전체 아키텍처
-
-최종 목표 구조:
-
-```text
-+-------------------------------+
-|          Web UI (Next.js)     |
-|   - /calendar 뷰              |
-|   - 설정 관리 (TODO)          |
-+-------------------------------+
-                ^
-                | HTTP (localhost)
-                v
-+-------------------------------+
-|       Go 데몬 epdcal          |
-|  - HTTP 서버(/api/*, /health) |
-|  - ICS Fetch/Parse/Expand     |
-|  - Chromium 캡처              |
-|  - PNG → packed plane 변환    |
-|  - EPD C driver 호출          |
-+-------------------------------+
-                ^
-                | SPI / GPIO
-                v
-+-------------------------------+
-| Waveshare 12.48" EPD (B)     |
-+-------------------------------+
-```
-
-주요 구성 요소(예정/부분 구현):
-
-- Go 메인 바이너리: [`cmd/epdcal/main.go`](cmd/epdcal/main.go)
-- 설정 로딩/저장: [`internal/config/config.go`](internal/config/config.go)
-- ICS HTTP Fetch + 캐시: [`internal/ics/fetch.go`](internal/ics/fetch.go)
-- ICS 파싱/정규화: [`internal/ics/parse.go`](internal/ics/parse.go)
-- 반복/예외 확장: [`internal/ics/expand.go`](internal/ics/expand.go)
-- 이벤트 모델: [`internal/model/model.go`](internal/model/model.go)
-- Web 서버 및 API: [`internal/web/web.go`](internal/web/web.go)
-- Headless Chromium 캡처: [`internal/capture/chromium.go`](internal/capture/chromium.go)
-- EPD C 드라이버 연동(cgo): [`internal/epd/epd.go`](internal/epd/epd.go), [`internal/epd/epd_cgo.go`](internal/epd/epd_cgo.go)
-- PNG → packed plane 변환: [`internal/convert/pack.go`](internal/convert/pack.go)
-- 진행 상황 정리: [`progress.md`](progress.md)
-- systemd 유닛: [`systemd/epdcal.service`](systemd/epdcal.service)
+이 문서는 설치/구동 방법, 설정 방법, ICS Recurrence/TZ 처리 전략, 한계점, 문제 해결 방법을 설명한다.  
+자세한 설계 및 진행 상황은 `progress.md` 를 참고한다.
 
 ---
 
-## 2. 하드웨어 / 디스플레이 드라이버
+## 1. 기능 개요
 
-### 2.1 대상 패널
+### 1.1 주요 기능
 
-- Waveshare 12.48" tri-color e-paper (B)
-- 해상도:
-  - width = 1304
-  - height = 984
-- Tri-color (Black/Red/White), 듀얼 1bpp plane 사용:
-  - Black plane
-  - Red plane (전송 시 C 드라이버에서 비트 반전)
+- **ICS 구독**
+  - 하나 이상의 ICS(iCalendar) URL 을 주기적으로 fetch
+  - HTTP ETag / Last‑Modified 기반 캐싱 (If‑None‑Match / If‑Modified‑Since)
+  - 네트워크 에러 또는 304 시 로컬 캐시 fallback
 
-### 2.2 C 드라이버 (Waveshare 제공)
+- **iCalendar 처리**
+  - TZID/VTIMEZONE 블록 파싱
+  - `DTSTART;TZID=...` / `DTEND;TZID=...` / UTC (`Z`) 시각 / floating time 처리
+  - RRULE(`FREQ=DAILY/WEEKLY/MONTHLY/YEARLY`, `BYDAY`, `BYMONTHDAY`, `INTERVAL`, `COUNT`, `UNTIL`) 확장
+  - `EXDATE` 로 occurrence 제거
+  - `RECURRENCE-ID` VEVENT 로 단일 인스턴스 override
+  - DATE 타입 all‑day 이벤트 처리
 
-C 헤더 `EPD_12in48B.h`에서 제공되는 API를 cgo로 래핑합니다:
+- **표시/렌더링**
+  - `image.NRGBA` 로 캘린더 화면 렌더링 (텍스트/레이아웃)
+  - red plane: 키워드 매칭 이벤트 또는 주말/공휴일 강조 등
+  - 최종 이미지를 1bpp packed buffer (black/red plane) 로 변환 후 EPD 에 전송
+  - `--dump` 옵션으로 `preview.png`, `black.bin`, `red.bin` 출력
+
+- **Web UI**
+  - Web UI 를 통해:
+    - ICS URL 목록 관리
+    - refresh 주기(분 단위 또는 cron 패턴), timezone, 표시 옵션 설정
+    - “Refresh now” (fetch+render+display) 버튼
+    - “Render preview” (fetch+render only) 버튼
+    - 마지막/다음 스케줄, 마지막 오류 표시
+  - `/preview.png` 로 마지막 렌더링 이미지를 브라우저에서 확인
+
+- **디스플레이 드라이버**
+  - Waveshare 제공 C 드라이버(`EPD_12in48B.h`) 를 cgo 로 래핑
+  - `EPD_12in48B_Init/Display/Clear/Sleep` 호출
+
+---
+
+## 2. 하드웨어 및 패널 사양
+
+- **패널**: Waveshare 12.48" tri‑color e‑paper (B)
+- **해상도**: 1304 x 984
+- **버퍼 형식**:
+  - 1bpp, MSB‑first
+  - stride: 163 bytes per row (1304 / 8)
+  - plane buffer size: 163 × 984 = 160,392 bytes
+  - 픽셀 (x, y)의 비트 위치:
+    - `byteIndex = y*163 + (x >> 3)`
+    - `mask = 0x80 >> (x & 7)`
+  - `0` = 잉크(black 또는 red), `1` = white
+  - C 드라이버는 red plane 바이트를 전송 전 `~` 로 반전:
+    - Go 쪽에서는 `0 = red ink` semantics 로 채운 뒤 그대로 전달
+
+EPD C API:
 
 ```c
 UBYTE EPD_12in48B_Init(void);
@@ -79,451 +77,355 @@ void EPD_12in48B_TurnOnDisplay(void);
 void EPD_12in48B_Sleep(void);
 ```
 
-버퍼 형식:
-
-- stride = 163 bytes per row (1304 / 8)
-- 각 plane 크기 = 163 * 984 = 160392 bytes
-- 인덱싱: `offset = y * 163 + xByte`
-
-Go 측의 bit packing 규칙:
-
-- 1bpp, MSB-first
-- 픽셀 (x, y)에 대해:
-  - `byteIndex = y*163 + (x >> 3)`
-  - `mask = 0x80 >> (x & 7)`
-- 초기 값:
-  - 버퍼는 0xFF(white)로 초기화
-  - bit=0 → 잉크(검정 또는 빨강)
-  - bit=1 → white
-- Red plane:
-  - Go 쪽에서는 black과 동일하게 "0=잉크"로 유지
-  - C 드라이버가 전송 시 `~RedImageByte`로 반전
+Go 에서는 cgo 를 이용해 위 함수들을 thin wrapper 로 감싸 `internal/epd` 패키지에서 사용한다.
 
 ---
 
-## 3. ICS 구독 및 HTTP 캐시
+## 3. 요구되는 소프트웨어 / 의존성
 
-### 3.1 ICS 구독
+- OS: Raspberry Pi OS (Raspbian) / Linux ARM
+- Go: 1.21 이상 권장
+- C Toolchain:
+  - `gcc`, `make`, etc.
+- Waveshare 12.48" (B) C 드라이버:
+  - 레포지토리 내 `waveshare/` 디렉터리에 vendored
+- (선택) Headless 브라우저 사용 시:
+  - Chromium + chromedp (추가 기능으로 사용할 경우)
 
-- 여러 ICS URL 지원
-- Fetch 트리거:
-  - 주기적(기본 15분)
-  - Web UI에서 수동 Refresh
-- OAuth / Google API / token.pickle 등 **사용 금지**
-  - 순수 HTTP GET 기반 `.ics` 구독만 지원
-
-### 3.2 HTTP 캐싱
-
-모듈: [`internal/ics/fetch.go`](internal/ics/fetch.go)
-
-- 응답 헤더:
-  - `ETag`, `Last-Modified`를 로컬 메타파일로 저장
-- 요청 시:
-  - `If-None-Match`, `If-Modified-Since` 헤더 사용
-- 304(Not Modified) 또는 네트워크 에러일 경우:
-  - 마지막으로 성공적으로 저장한 `body.ics`를 사용
-- 캐시 경로:
-  - 기본: `/var/lib/epdcal/ics-cache/`
-  - 디버그 모드(`--debug`): `./cache/ics-cache/`
+빌드/런 시 Google API, Python, PIL, token.pickle 등은 필요하지 않다.
 
 ---
 
-## 4. iCalendar 처리 (Timezone / Recurrence / 예외)
+## 4. 빌드 및 설치
 
-타임존/반복 이벤트 처리는 이 프로젝트에서 **가장 중요한 부분**입니다. breadth 보다 **정확성**을 우선합니다.
+### 4.1 레포지토리 구조 (요약)
 
-### 4.1 타임존(TZID/VTIMEZONE)
+```text
+cmd/epdcal/main.go      # 메인 엔트리 포인트
+internal/config/        # 설정 로딩/검증
+internal/web/           # HTTP/Web UI 서버
+internal/ics/           # ICS fetch/parse/expand
+internal/model/         # 공용 모델 (Occurrence 등)
+internal/render/        # image.NRGBA 렌더링
+internal/convert/       # NRGBA → packed plane 변환
+internal/epd/           # cgo 기반 EPD 드라이버 래퍼
+waveshare/              # vendored Waveshare C 드라이버
+systemd/epdcal.service  # systemd 유닛 파일
+progress.md             # 진행/설계 문서
+README.md               # 이 문서
+```
 
-- ICS 내부의 `VTIMEZONE` 블록을 파싱
-- `DTSTART;TZID=Zone/...`, `DTEND;TZID=Zone/...` 지원
-- `Z`(UTC)로 끝나는 DATE-TIME은 UTC로 파싱
-- floating time(타임존 없는 LOCAL-TIME)도 최대한 합리적으로 처리
-- 모든 occurrence는 **표시용 타임존**으로 변환:
-  - `config.Timezone` (예: `Asia/Seoul`)
-- DST가 있는 타임존에 대해서도:
-  - `VTIMEZONE` 정의와 Go time zone DB를 최대한 활용하여 자연스러운 동작 보장
+### 4.2 빌드
 
-### 4.2 반복 이벤트 (RRULE)
+Raspberry Pi 상에서:
 
-RRULE 파싱/확장은 [`internal/ics/expand.go`](internal/ics/expand.go)에서 처리하며, `github.com/teambition/rrule-go`등의 라이브러리 사용을 전제로 합니다.
+```bash
+cd /path/to/maginkcal-go
+go build -o epdcal ./cmd/epdcal
+```
 
-최소 지원 범위:
+빌드 결과:
 
-- `FREQ=DAILY/WEEKLY/MONTHLY/YEARLY`
-- `BYDAY`
-- `BYMONTHDAY`
-- `INTERVAL`
-- `COUNT`
-- `UNTIL`
+- `./epdcal` 실행 파일 생성
 
-전략:
+### 4.3 설치 (예시)
 
-- 각 VEVENT에 대해:
-  - `RRULE`/`RDATE` 없음: 단일 occurrence 생성
-  - `RRULE` 존재:
-    - horizon window 내에서만 occurrence 확장
-- 확장 범위:
-  - `[rangeStart, rangeEnd]` (예: now - backfill ~ now + horizonDays)
-  - backfill: 자정 경계(00:00)를 넘는 이벤트를 위해 설정
-- 발생 수 상한:
-  - 이벤트당 max occurrences (예: 5000개)
-  - 상한을 초과하면 워닝 로그 기록 후 추가 확장 중단
+```bash
+# 바이너리 설치
+sudo install -m 0755 ./epdcal /usr/local/bin/epdcal
 
-### 4.3 예외: EXDATE / RECURRENCE-ID
+# 설정 디렉터리/파일
+sudo mkdir -p /etc/epdcal
+sudo touch /etc/epdcal/config.yaml
+sudo chmod 600 /etc/epdcal/config.yaml
 
-예외 처리 규칙:
+# 런타임 데이터 디렉터리
+sudo mkdir -p /var/lib/epdcal
+sudo chown pi:pi /var/lib/epdcal  # 필요 시 사용자에 맞게 조정
+```
 
-- `EXDATE`:
-  - base DTSTART 의 타임존/UTC 기준으로 시각을 맞추어 비교
-  - 해당 occurrence를 제거
-- `RECURRENCE-ID`:
-  - (UID, RECURRENCE-ID timestamp)를 키로 override VEVENT를 맵핑
-  - base RRULE 확장 시:
-    - 동일 키의 occurrence가 있으면 base occurrence를 override 이벤트로 대체
-
-### 4.4 All-day 이벤트
-
-- DATE 타입과 DATE-TIME 타입 구분
-- All-day(DATE) 이벤트는 표시용 타임존 기준:
-  - start: local date 의 00:00
-  - end: 다음 날 00:00 (exclusive)
-- 렌더링 시:
-  - all-day 섹션이 따로 존재할 수 있으며(옵션),
-  - 하루를 완전히 커버하는 이벤트로 취급
-
-### 4.5 UID 안정성 / 중복 제거
-
-- 여러 캘린더(ICS URL)에서 이벤트를 merge할 때:
-  - key = (calendarID 또는 url, UID, recurrence-instance key)
-  - 동일 key 를 가진 occurrence는 하나로 합침
-- recurrence-instance key:
-  - base: DTSTART(정규화된 시작 시각)
-  - override: RECURRENCE-ID을 기준으로 결정
+최초 실행 시 config 가 비어 있다면 기본값을 채우는 로직을 둘 수도 있으며,  
+그렇지 않다면 README 에 나온 예시를 참고해 수동으로 작성한다.
 
 ---
 
-## 5. 설정 파일 및 런타임 디렉터리
+## 5. 설정 파일 (`/etc/epdcal/config.yaml`)
 
-### 5.1 설정 파일
-
-- 기본 경로: `/etc/epdcal/config.yaml`
-- CLI 플래그: `--config /path/to/config.yaml` 로 변경 가능
-- 최초 실행 시:
-  - 파일이 없으면 디폴트 설정으로 생성
-  - Web UI URL 출력
-  - 파일 퍼미션: 0600
-
-설정 구조(요약):
+### 5.1 예시
 
 ```yaml
 listen: "127.0.0.1:8080"
 timezone: "Asia/Seoul"
-week_start: "monday"  # 또는 "sunday"
-refresh_minutes: 15
+refresh: "*/15 * * * *"     # 15분마다
 horizon_days: 7
 show_all_day: true
-highlight_red:
+highlight_red_keywords:
+  - "중요"
   - "휴가"
-  - "공휴일"
+  - "deadline"
+
 ics:
   - id: "personal"
-    name: "개인 캘린더"
     url: "https://example.com/personal.ics"
   - id: "work"
-    name: "회사 캘린더"
     url: "https://example.com/work.ics"
+
 basic_auth:
-  username: "user"
-  password: "pass"
+  enabled: true
+  username: "admin"
+  password: "change-me"
 ```
 
-구체적인 struct 정의는 [`internal/config/config.go`](internal/config/config.go)에 구현됩니다.
+주요 필드:
 
-### 5.2 런타임 디렉터리
+- `listen`: HTTP 서버 bind 주소 (`127.0.0.1:8080` 권장)
+- `timezone`: 표시용 타임존 (IANA 이름, 예: `Asia/Seoul`)
+- `refresh`:
+  - cron 스타일 문자열 (예: `*/15 * * * *`)
+  - 지정한 스케줄에 맞춰 `fetch + render + display` 수행
+- `horizon_days`:
+  - 앞으로 몇 일치의 이벤트를 표시할지 (예: 7일)
+- `show_all_day`: all‑day 섹션 표시 여부
+- `highlight_red_keywords`:
+  - 이벤트 제목/설명에 포함될 경우 red plane 으로 강조할 키워드 목록
+- `ics`:
+  - `id`: 내부 식별자
+  - `url`: ICS 구독 URL (비공개 URL 포함 가능, **로그에 풀로 찍지 않도록 주의**)
+- `basic_auth`:
+  - `enabled`: true 시 Basic Auth 활성화
+  - `username`, `password`: 인증 정보
 
-- 기본:
-  - 설정: `/etc/epdcal/config.yaml`
-  - 캐시/아티팩트: `/var/lib/epdcal/`
-    - `/var/lib/epdcal/ics-cache/` – ICS HTTP 캐시
-    - `/var/lib/epdcal/preview.png` – 마지막 렌더링 Preview
-    - `/var/lib/epdcal/black.bin`, `/var/lib/epdcal/red.bin` – packed plane (예정)
-- 디버그 모드 (`--debug`):
-  - 설정: `./config.yaml`
-  - 캐시: `./cache/ics-cache/`, `./cache/preview.png` 등
+설정 파일 퍼미션은 **0600** 으로 유지하여 URL/비밀번호가 노출되지 않도록 한다.
 
 ---
 
-## 6. Web UI & HTTP API
+## 6. Web UI 및 HTTP API
 
-### 6.1 HTTP 서버
-
-메인 서버 시작 코드는 [`cmd/epdcal/main.go`](cmd/epdcal/main.go)에서:
-
-- `web.StartServer(ctx, conf, debug)` 호출로 시작
-- 기본 listen: `127.0.0.1:8080`
-- `--listen` 플래그로 덮어쓰기 가능
-
-### 6.2 엔드포인트 설계
+### 6.1 엔드포인트 요약
 
 - `GET /`  
-  - Web UI 기본 페이지 (Next.js 정적 빌드)
-- `GET /calendar`  
-  - EPD용 캘린더 레이아웃 전용 페이지(Next.js)
-  - headless Chromium 캡처 타깃
-- `GET /api/events`  
-  - 확장된 occurrence 리스트 반환
-  - 응답 예시:
-    ```json
-    {
-      "occurrences": [...],
-      "truncated_uids": [...],
-      "range_start": "2025-01-01T00:00:00+09:00",
-      "range_end": "2025-01-08T00:00:00+09:00",
-      "display_timezone": "Asia/Seoul",
-      "week_start": "monday"
-    }
-    ```
-- `GET /api/battery`  
-  - 배터리 상태 리포트 (mock → 추후 PiSugar3 I2C로 교체 가능)
-  - 예:
-    ```json
-    { "percent": 73, "voltage_mv": 0 }
-    ```
-- `GET /api/config` (TODO)  
-  - 현재 설정 조회(JSON)
-- `POST /api/config` (TODO)  
-  - 설정 업데이트(JSON)
-- `POST /api/refresh` (TODO)  
-  - 즉시 ICS fetch + expand + render + display 트리거
-- `POST /api/render` (TODO)  
-  - ICS fetch + expand + render만 수행 (display는 터치 안 함)
-- `GET /preview.png` (TODO)  
-  - 마지막 Preview PNG 반환
+  메인 HTML UI (설정/상태/액션 버튼 제공)
+
+- `GET /api/config`  
+  현재 설정 값을 JSON 형태로 반환
+
+- `POST /api/config`  
+  JSON body 를 받아 설정 값을 갱신.  
+  (예: ICS URL 추가/삭제, refresh 스케줄 변경, timezone 변경 등)
+
+- `POST /api/refresh`  
+  즉시 `fetch + render + display` 실행.  
+  (주기 스케줄과 별개로 수동 갱신 용도)
+
+- `POST /api/render`  
+  `fetch + render` 까지만 수행, EPD 디스플레이는 건드리지 않음.  
+  Preview PNG 업데이트 용도.
+
+- `GET /preview.png`  
+  마지막 렌더링 결과 PNG 반환.  
+  브라우저에서 EPD 에 전송될 화면을 미리 확인할 수 있다.
+
 - `GET /health`  
-  - 헬스체크(예: 200 OK, body = "OK")
+  헬스 체크용 간단한 OK 응답.  
+  Basic Auth 없이도 접근 가능하도록 유지.
 
-### 6.3 Web UI – `/calendar` 페이지
+### 6.2 보안
 
-프론트엔드 구현은 Next.js 기준으로 진행되며, 실제 코드는 `webui/` 디렉토리에 위치합니다 (빌드 결과는 Go 바이너리에 embed).
-
-주요 특징:
-
-- 고정 캔버스 크기:
-  - `<main className="w-[1304px] h-[1200px] ...">`
-  - 상단은 날짜/타임존/배터리/상태 영역, 하단은 월간 그리드
-- `/api/events`, `/api/battery`에서 데이터를 fetch
-- 데이터 로딩 완료 시 root element에 `data-ready="true"` 속성 추가
-  - headless Chromium에서 이 속성을 기다렸다가 스크린샷 캡처
-- ICS 이벤트 표시:
-  - 월간 그리드(5주 또는 6주)
-  - 오늘 강조, 주말 강조
-  - All-day 이벤트와 시간 이벤트를 다르게 표시
-- 배터리 표시:
-  - `/api/battery`의 percent 구간별로 5단계 아이콘 표시
-  - Font Awesome `battery-empty`, `battery-quarter`, `battery-half`, `battery-three-quarters`, `battery-full` 사용
+- 기본적으로 `listen: "127.0.0.1:8080"` 으로 설정하여 로컬에서만 접속 가능하게 한다.
+- 다른 호스트/IP 에서 접근이 필요하다면:
+  - `listen: "0.0.0.0:8080"` 처럼 변경
+  - **반드시 Basic Auth 또는 방화벽, VPN 등의 추가 보호를 사용할 것**
+- Basic Auth 가 활성화된 경우:
+  - `/health` 를 제외한 모든 엔드포인트에서 인증 필요
 
 ---
 
-## 7. 렌더링 파이프라인
+## 7. ICS Recurrence/TZ 처리 개요
 
-### 7.1 전체 흐름
+### 7.1 시간 정규화 전략
 
-1. **ICS Fetch/Parse/Expand**
-   - `runRefreshCycle`에서 ICS 소스 전부에 대해 fetch + parse 수행
-   - parse 결과를 recurrence 확장 모듈로 전달해 `[rangeStart, rangeEnd]` 범위의 occurrence 생성
-2. **Web UI 데이터 제공**
-   - `/api/events`에서 occurrence 리스트를 JSON으로 반환
-   - `/api/battery`에서 배터리 상태 반환
-3. **Web UI 렌더링**
-   - Next.js `/calendar` 페이지에서 JSON을 기반으로 레이아웃 렌더
-   - 로딩 완료 후 `data-ready="true"`로 표시
-4. **Chromium 캡처**
-   - Go 측에서 headless Chromium(chromedp)을 이용해 `/calendar` 페이지를 엽니다.
-   - `data-ready="true"` element가 `Visible` 될 때까지 대기 후,
-   - viewport = 1304x1200 으로 full screenshot(PNG) 캡처
-   - [`internal/capture/chromium.go`](internal/capture/chromium.go) 참고
-5. **PNG → Black/Red Plane**
-   - PNG를 `image.NRGBA`로 디코드
-   - `internal/convert/pack.go`에서:
-     - 한 번의 루프로 각 픽셀의 색을 분석
-     - black plane / red plane 각각의 bit 설정 (0=잉크, 1=white)
-6. **EPD 디스플레이**
-   - `internal/epd` 패키지에서:
-     - `EPD_12in48B_Init`
-     - 필요 시 `EPD_12in48B_Clear`
-     - `EPD_12in48B_Display(black, red)`
-     - `EPD_12in48B_Sleep`
-   - `--render-only` 플래그가 설정된 경우 실제 EPD 호출은 생략하고, PNG/packed buffer만 생성(개발/테스트용)
+- 모든 occurrence 는 최종적으로 `config.Timezone` (예: `Asia/Seoul`) 기준 시각으로 변환 후 사용
+- 파싱 규칙:
+  - `DTSTART;TZID=Zone/...`:
+    - ICS 내 `VTIMEZONE` 정의 또는 시스템 타임존 DB를 사용해 해석
+  - `DTSTART:...Z` (UTC):
+    - UTC 로 파싱 후 표시용 타임존으로 변환
+  - floating time (TZID, `Z` 없음):
+    - 캘린더/이벤트의 기본 타임존 규칙 또는 표시용 타임존으로 해석
+  - `DATE` 타입(all‑day):
+    - 표시용 타임존 기준:
+      - 시작: `YYYY-MM-DD 00:00`
+      - 종료: `다음 날 00:00` (exclusive)
 
-### 7.2 디버그 모드 & Dump
+### 7.2 Recurrence 확장
 
-- `--dump` 플래그:
-  - `preview.png` (Chromium 캡처 결과)
-  - `black.bin`, `red.bin` (packed plane) – TODO
-- `--debug` 플래그:
-  - `/etc`, `/var/lib` 대신 로컬 디렉터리 사용
-  - 개발 PC에서 root 권한 없이 테스트 가능
+- RRULE 이 없는 VEVENT:
+  - 단일 occurrence 만 생성
+- RRULE 이 있는 VEVENT:
+  - `FREQ`, `BYDAY`, `BYMONTHDAY`, `INTERVAL`, `COUNT`, `UNTIL` 등을 지원
+  - `[rangeStart, rangeEnd]` (예: `now - backfill`, `now + horizon`) 범위 안에서만 occurrence 생성
+  - 이벤트 당 일정 개수(예: 5000개) 상한을 두어 폭발 방지
+
+- 예외/override:
+  - `EXDATE`:
+    - RRULE 로 생성된 occurrence 중 해당 날짜/시간과 일치하는 인스턴스를 제거
+  - `RECURRENCE-ID`:
+    - `(UID, RECURRENCE-ID timestamp)` 키로 base occurrence 탐색
+    - 해당 occurrence 의 내용(시간/제목/위치 등)을 override VEVENT 로 대체
+
+- UID / 중복 제거:
+  - 여러 ICS 를 merge 할 때:
+    - `(calendarID(or URL), UID, recurrence-instance key)` 로 occurrence 를 식별
+    - 동일 키는 하나만 남기되, 나중 규칙/override 에 의해 갱신할 수 있음
+
+### 7.3 라이브러리
+
+- ICS 파싱:
+  - 예: `github.com/arran4/golang-ical`
+- RRULE 처리:
+  - 예: `github.com/teambition/rrule-go`
+- 구현 상 제한/예외 케이스는 아래 *한계 및 제한 사항* 에 명시
 
 ---
 
-## 8. 빌드 & 실행 방법 (요약)
+## 8. Known Limitations (알려진 제한 사항)
 
-### 8.1 사전 준비
+아래 항목은 구현/테스트 범위를 벗어나거나, 단순화한 부분이다.
 
-- Go (1.22+ 권장)
-- Node.js / pnpm (Web UI 빌드용, 이미 빌드된 정적 파일이 있다면 생략 가능)
-- Raspberry Pi:
-  - SPI / GPIO 설정 (Waveshare 가이드 참고)
-  - Chromium or Chromium headless 설치 (Raspbian)
+- 매우 복잡한 RRULE 조합:
+  - 예: BYSETPOS, 복수의 RRULE, RDATE/RRULE 혼합 등
+  - 일반적인 데일리/위클리/먼슬리/이어리 + BYDAY/BYMONTHDAY/INTERVAL/COUNT/UNTIL 중심으로 동작 검증
+- 일부 희귀 타임존 규칙:
+  - ICS 내 VTIMEZONE 정의가 불완전하거나, 시스템 타임존 DB 와 상이한 경우
+  - 이 경우 표시 시간에 약간의 오차가 생길 수 있음
+- ICS 표준을 엄격히 따르지 않는 구현체:
+  - 일부 서버는 비표준 확장 필드를 포함하거나, DATE/DATE-TIME/TZID 처리에 일관성이 부족할 수 있다.
+- EPD 하드웨어 제약:
+  - 업데이트 속도가 느리므로 너무 짧은 interval 로 빈번하게 업데이트하는 것은 권장하지 않는다.
+  - 부분 업데이트(partial refresh)는 지원하지 않으며, 항상 full refresh 기준으로 구현
 
-### 8.2 Web UI 빌드 (예시)
+이들 제한 사항은 `progress.md` 와 코드 주석에도 가능한 한 명시하며,  
+필요 시 향후 릴리스에서 보완할 수 있다.
+
+---
+
+## 9. 실행 방법
+
+### 9.1 단발 실행 (테스트용)
 
 ```bash
-cd webui
-pnpm install
-pnpm build
-# Next.js 출력물을 Go embed 대상 디렉터리로 복사 (예: ../internal/web/static 또는 embed FS)
+epdcal --config /etc/epdcal/config.yaml --once --dump
 ```
 
-(실제 빌드 경로/스크립트는 구현 시점에 README에 추가로 명시)
+- 지정된 ICS 를 fetch/parse/expand 한 뒤 한 번 렌더링 및 EPD 표시를 수행하고 종료
+- `--dump` 사용 시:
+  - `preview.png`
+  - `black.bin`
+  - `red.bin`
+  등을 `/var/lib/epdcal/` (또는 설정된 디렉터리)에 저장
 
-### 8.3 Go 바이너리 빌드
+### 9.2 데몬 실행
 
 ```bash
-cd /path/to/repo
-go build -o epdcal ./cmd/epdcal
+epdcal --config /etc/epdcal/config.yaml
 ```
 
-Raspberry Pi에서 직접 빌드하거나, cross-compile 설정을 사용할 수 있습니다.
+- 설정 파일의 `refresh` 스케줄에 맞춰 주기적으로 업데이트
+- HTTP Web UI (`listen` 주소 기준) 가 활성화됨
 
-### 8.4 기본 실행 예시
+### 9.3 Web UI 접속
 
-개발/디버그 환경 (Chromium 캡처 테스트):
+- 예: `listen: "127.0.0.1:8080"` 인 경우,
+  - Raspberry Pi 에서 브라우저를 열어 `http://127.0.0.1:8080/` 접속
+  - 같은 네트워크의 PC 에서 접속하고 싶다면 `listen` 을 `0.0.0.0:8080` 으로 변경 후:
+    - `http://<라즈베리파이 IP>:8080/` 으로 접속
+- Basic Auth 활성화 시 브라우저에서 사용자명/비밀번호를 입력해야 한다.
+
+---
+
+## 10. systemd 서비스
+
+예시 `systemd/epdcal.service`:
+
+```ini
+[Unit]
+Description=EPD ICS Calendar
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/epdcal --config /etc/epdcal/config.yaml
+Restart=on-failure
+User=pi
+Group=pi
+
+[Install]
+WantedBy=multi-user.target
+```
+
+설치:
 
 ```bash
-./epdcal --debug --listen 127.0.0.1:8080 --once --dump
+sudo cp systemd/epdcal.service /etc/systemd/system/epdcal.service
+sudo systemctl daemon-reload
+sudo systemctl enable epdcal
+sudo systemctl start epdcal
 ```
 
-- `--debug`:
-  - `./config.yaml`, `./cache/` 를 사용
-- `--once`:
-  - 한 번 refresh cycle → (옵션) capture 테스트 후 종료
-- `--dump`:
-  - `./cache/preview.png` 생성 (Chromium 캡처 결과)
+상태 확인:
 
-서비스 모드 (Raspberry Pi, systemd):
-
-1. 설정 파일 위치:
-   - `/etc/epdcal/config.yaml` 생성/수정
-2. systemd 유닛 설치:
-   - [`systemd/epdcal.service`](systemd/epdcal.service)를 `/etc/systemd/system/epdcal.service`로 복사
-3. enable & start:
-   ```bash
-   sudo systemctl daemon-reload
-   sudo systemctl enable epdcal
-   sudo systemctl start epdcal
-   ```
+```bash
+systemctl status epdcal
+journalctl -u epdcal -f
+```
 
 ---
 
-## 9. Recurrence/TZ 테스트 전략
+## 11. Troubleshooting (문제 해결)
 
-ICS 반복 및 타임존 처리는 unit test로 강하게 검증합니다. 테스트는 [`internal/ics`](internal/ics) 패키지 아래에 위치합니다.
+### 11.1 화면이 업데이트되지 않음
 
-테스트용 ICS fixture:
+- `journalctl -u epdcal -f` 로 로그 확인
+- ICS fetch 에러:
+  - 네트워크/URL 을 확인
+  - HTTPS 인증서 문제 여부 확인
+- Web UI 에서:
+  - 마지막 오류 메시지(last error)를 확인
 
-- `internal/ics/testdata/simple.ics`
-  - 단일 non-recurring 이벤트
-- `internal/ics/testdata/weekly_exdate.ics`
-  - weekly recurring 이벤트 + EXDATE
-- `internal/ics/testdata/override_recurrence_id.ics`
-  - RECURRENCE-ID를 사용한 단일 occurrence override
-- `internal/ics/testdata/tz_utc_allday.ics`
-  - TZID 이벤트, UTC 이벤트, all-day 이벤트 혼합
+### 11.2 시간/타임존이 이상하게 보임
 
-테스트 코드(예정):
+- `config.yaml` 의 `timezone` 이 올바른 IANA 이름인지 확인 (예: `Asia/Seoul`)
+- ICS 파일 내 이벤트의 DTSTART/DTEND 가 어떤 형태인지(UTC / TZID / DATE) 확인
+- DST 가 있는 타임존인 경우, Recurrence 경계(특히 DST 전후)에서 약간의 오차가 있을 수 있음
 
-- `internal/ics/parse_test.go`
-  - VEVENT 필드(DTSTART/DTEND, RRULE, EXDATE, RECURRENCE-ID, UID 등) 파싱 검증
-- `internal/ics/expand_test.go`
-  - 확장된 occurrence 의 Start/End가 표시용 타임존에서 기대값과 일치하는지 검증
-  - EXDATE/RECURRENCE-ID 적용 결과 중복/누락 여부 검사
+### 11.3 EPD 가 반응하지 않음
 
----
+- SPI/I2C 등 하드웨어 연결 확인 (제공된 Waveshare C 예제 코드로 먼저 테스트해 보는 것을 권장)
+- `EPD_12in48B_Init` 가 0 이 아닌 값을 반환하는지 로그에서 확인
+- 충분한 전류/전압 공급 여부 확인 (대형 EPD 는 비교적 많은 전력을 소모)
 
-## 10. Known Limitations (예정/계획)
+### 11.4 ICS 이벤트 일부가 빠지거나 중복됨
 
-다음 항목들은 구현 라이브러리 및 시간 제약에 따라 제한될 수 있으며, 실제 구현 상태에 맞추어 이 섹션을 계속 업데이트해야 합니다.
-
-- RRULE:
-  - 매우 복잡한 규칙 (BYSETPOS, 복잡한 BYxxx 조합 등)은 부분 지원 또는 미지원일 수 있음
-- VTIMEZONE:
-  - 특수한/예외적인 히스토리컬 타임존 규칙은 Go 표준 시간대 DB 및 ICS 정의에 의존
-- Rendering:
-  - 초기에 렌더링은 단순한 월간 or 주간 뷰로 제한
-  - 긴 설명/제목은 줄바꿈 또는 생략 처리
-- Web UI:
-  - 초기 버전에서는 설정 페이지 UX가 단순할 수 있음
-  - 모바일 브라우저에서의 사용성 최적화는 2차 과제
-
-각 제한사항은 구현 진행에 따라 [`progress.md`](progress.md)와 이 README의 이 섹션에 반영합니다.
+- 해당 이벤트가:
+  - EXDATE 에 의해 제거된 것은 아닌지
+  - RECURRENCE-ID override 로 치환된 것은 아닌지
+- 다수의 ICS 를 merge 할 경우:
+  - 같은 UID/INSTANCE 키를 가진 이벤트가 여러 ICS 에 정의되어 중복 제거되었을 가능성
+- 복잡한 RRULE 조합인 경우:
+  - 현재 구현이 일부 패턴을 지원하지 않을 수 있음 (Known Limitations 섹션 참고)
 
 ---
 
-## 11. Troubleshooting
+## 12. License
 
-### 11.1 Chromium/Chromedp 관련 문제
-
-- 증상:
-  - `--once --dump` 실행 시 `preview.png`가 생성되지 않거나 비어 있음
-- 점검:
-  - Raspberry Pi에 Chromium/Chromium headless가 설치되어 있는지 확인
-  - 환경변수 `DISPLAY` 설정이 필요한지 (X11 기반 vs headless)
-  - `/calendar` 페이지에 접근했을 때 실제로 렌더가 완료되는지 브라우저로 확인
-- 로그:
-  - `internal/capture/chromium.go`에서 chromedp 에러를 로그로 남깁니다.
-
-### 11.2 EPD 표시 문제
-
-- 증상:
-  - 화면이 갱신되지 않거나, 검정/빨강이 반전됨, 노이즈 발생
-- 점검:
-  - SPI, GPIO, 전원 연결 상태 확인 (Waveshare 공식 가이드 참고)
-  - `EPD_12in48B_Init`, `EPD_12in48B_Clear`, `EPD_12in48B_Display`, `EPD_12in48B_Sleep` 호출 순서 확인
-  - `black.bin`, `red.bin`을 오실로스코프 또는 로직 분석기로 디버깅할 수 있다면, 전송되는 비트 패턴 검증
-- 코드:
-  - packed buffer 변환 로직(`internal/convert/pack.go`)에서 stride, bit 순서(MSB-first) 재확인
-
-### 11.3 ICS 파싱/시간 문제
-
-- 증상:
-  - 이벤트 시간이 1시간씩 밀리거나, all-day 이벤트가 잘못된 날에 표시
-- 점검:
-  - `config.Timezone`가 올바른 IANA 이름인지 확인 (`Asia/Seoul` 등)
-  - ICS 내 `VTIMEZONE` 정의와 실제 사용 시간대가 일치하는지
-  - UNTIL, EXDATE, RECURRENCE-ID가 UTC인지 localtime인지 확인
-- 해결:
-  - 문제가 되는 ICS 일부를 `internal/ics/testdata`로 추가하고, 단위 테스트를 작성해 회귀 방지
-
-### 11.4 파일 권한/경로 문제
-
-- 증상:
-  - 설정 파일 생성 실패, 캐시 디렉터리 생성 실패
-- 점검:
-  - `/etc/epdcal/`, `/var/lib/epdcal/`에 대해 적절한 권한이 있는지 확인
-  - 디버그 모드(`--debug`)로 실행하여 로컬 디렉터리 사용이 가능한지 확인
+라이선스 정보는 `LICENSE.md` 를 참고한다.
 
 ---
 
-## 12. 향후 작업 및 기여
+## 13. 개발 참고
 
-진행 상태와 상세 TODO는 [`progress.md`](progress.md)에 정리합니다.  
-
-기여 아이디어:
-
-- ICS/TZ Recurrence 처리 고도화
-- 실제 PiSugar3/I2C 기반 배터리 리더 구현
-- 다양한 레이아웃(주간 뷰, ToDo 리스트 통합 등) 추가
-- 설정 Web UI 개선 (다국어 지원, 인증/권한 강화)
-
-Pull Request 또는 Issue 작성 시, 실제 사용 중인 ICS 예제(민감 정보 제거)를 함께 첨부해 주시면 Recurrence/TZ 처리 개선에 큰 도움이 됩니다.
+- 상세 설계, 진행 상황, 향후 TODO 는 `progress.md` 에 정리되어 있다.
+- ICS Recurrence/TZ 처리는 정확성을 최우선으로 하며,
+  - `internal/ics/testdata/*.ics` fixture 와
+  - `internal/ics` 의 unit test 로 지속적으로 검증할 계획이다.

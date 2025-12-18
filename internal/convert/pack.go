@@ -8,8 +8,8 @@ import (
 
 // EPD panel geometry (12.48" B, tri-color).
 const (
-	EPDWidth      = 1304
-	EPDHeight     = 984
+	EPDWidth      = 984
+	EPDHeight     = 1304
 	EPDByteStride = EPDWidth / 8 // 163 bytes per row
 	EPDPlaneSize  = EPDByteStride * EPDHeight
 )
@@ -19,8 +19,8 @@ const (
 //
 // Requirements / behavior:
 //
-//   - img width must be exactly 1304 pixels (EPDWidth).
-//   - img height must be >= 984 pixels (EPDHeight).
+//   - img width must be exactly 984 pixels (EPDWidth).
+//   - img height must be >= 1304 pixels (EPDHeight).
 //   - height가 더 크면 세로 방향으로 중앙을 잘라(센터 크롭) 984px만 사용한다.
 //   - 픽셀 분류:
 //   - 투명(alpha < 128) → white
