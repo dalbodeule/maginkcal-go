@@ -52,7 +52,7 @@ func main() {
 
 	appLog.Info("effective config",
 		"config_path", flags.configPath,
-		"listen", conf.Listen,
+		"listen", "http://"+conf.Listen,
 		"timezone", conf.Timezone,
 		"refresh_minutes", conf.RefreshMinutes,
 		"horizon_days", conf.HorizonDays,

@@ -37,6 +37,12 @@ type Config struct {
 	// Timezone is the IANA timezone used as canonical display zone (e.g. "Asia/Seoul").
 	Timezone string `yaml:"timezone" json:"timezone"`
 
+	// WeekStart controls which weekday is treated as the first day of the week
+	// in calendar views. Supported values:
+	//   - "monday" (default)
+	//   - "sunday"
+	WeekStart string `yaml:"week_start" json:"week_start"`
+
 	// RefreshMinutes is the periodic refresh interval in minutes.
 	RefreshMinutes int `yaml:"refresh_minutes" json:"refresh_minutes"`
 
@@ -62,6 +68,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		Listen:         "127.0.0.1:8080",
 		Timezone:       "Asia/Seoul",
+		WeekStart:      "monday",
 		RefreshMinutes: 15,
 		HorizonDays:    7,
 		ShowAllDay:     true,
@@ -79,6 +86,16 @@ func (c *Config) Normalize() {
 	}
 	if c.Timezone == "" {
 		c.Timezone = "Asia/Seoul"
+	}
+	// WeekStart default & validation.
+	switch c.WeekStart {
+	case "monday", "sunday":
+		// ok
+	case "":
+		c.WeekStart = "monday"
+	default:
+		// Unknown value; fall back to monday to avoid surprising layouts.
+		c.WeekStart = "monday"
 	}
 	if c.RefreshMinutes <= 0 {
 		c.RefreshMinutes = 15

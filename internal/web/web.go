@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"epdcal/internal/battery"
 	"epdcal/internal/config"
 	"epdcal/internal/ics"
 	appLog "epdcal/internal/log"
@@ -54,13 +55,14 @@ func (s *Server) Handler() http.Handler {
 // 이 함수는 API 핸들러 구현에 포커스하기 위해 간단한 ListenAndServe 만 제공한다.
 func StartServer(_ context.Context, cfg *config.Config, debug bool) error {
 	s := NewServer(cfg, debug)
-	appLog.Info("starting HTTP server", "listen", cfg.Listen, "debug", debug)
+	appLog.Info("starting HTTP server", "listen", "http://"+cfg.Listen, "debug", debug)
 	return http.ListenAndServe(cfg.Listen, s.Handler())
 }
 
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/health", s.handleHealth)
 	s.mux.HandleFunc("/api/events", s.handleEvents)
+	s.mux.HandleFunc("/api/battery", s.handleBattery)
 	s.mux.HandleFunc("/preview.png", s.handlePreview)
 
 	// Static Next.js exported UI (embedded via Go 1.16+ embed.FS).
@@ -78,6 +80,39 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("OK"))
+}
+
+// handleBattery exposes current battery status (percent, voltage) for the Web UI.
+//
+// For now this endpoint uses battery.DefaultReader(), which is backed by a
+// mock implementation returning a random percentage. Later, DefaultReader
+// can be wired to a PiSugar3 I2C-based Reader on Raspberry Pi.
+func (s *Server) handleBattery(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	br := battery.DefaultReader()
+	if br == nil {
+		writeError(w, http.StatusInternalServerError, "battery reader unavailable")
+		return
+	}
+
+	status, err := br.Read(ctx)
+	if err != nil {
+		appLog.Error("battery read failed", err)
+		writeError(w, http.StatusInternalServerError, "failed to read battery")
+		return
+	}
+
+	type batteryResponse struct {
+		Percent   int `json:"percent"`
+		VoltageMv int `json:"voltage_mv"`
+	}
+
+	resp := batteryResponse{
+		Percent:   status.Percent,
+		VoltageMv: status.VoltageMv,
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // staticFileServer returns an http.Handler that serves the embedded
@@ -128,6 +163,7 @@ type eventsResponse struct {
 	RangeStart      time.Time       `json:"range_start"`
 	RangeEnd        time.Time       `json:"range_end"`
 	DisplayTimeZone string          `json:"display_timezone"`
+	WeekStart       string          `json:"week_start"`
 }
 
 // occurrenceDTO is a JSON-friendly view of occurrences.
@@ -207,6 +243,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			RangeStart:      rangeStart,
 			RangeEnd:        rangeEnd,
 			DisplayTimeZone: loc.String(),
+			WeekStart:       s.cfg.WeekStart,
 		})
 		return
 	}
@@ -274,6 +311,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		RangeStart:      rangeStart,
 		RangeEnd:        rangeEnd,
 		DisplayTimeZone: loc.String(),
+		WeekStart:       s.cfg.WeekStart,
 	}
 
 	writeJSON(w, http.StatusOK, resp)

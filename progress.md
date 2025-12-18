@@ -1,6 +1,6 @@
 # EPD ICS Calendar – Development Progress
 
-_Last updated: 2025-12-17_
+_Last updated: 2025-12-18_
 
 ## 1. Project Overview
 
@@ -85,11 +85,11 @@ Planned repository layout (relative to project root):
     - Returns the config so the daemon and Web UI can start using defaults.
 - [x] Design config schema:
   - Schema modeled in `Config`:
-    - `Listen`, `Timezone`, `RefreshMinutes`, `HorizonDays`, `ShowAllDay`, `HighlightRed`, `ICS`, `BasicAuth`.
+    - `Listen`, `Timezone`, `WeekStart`, `RefreshMinutes`, `HorizonDays`, `ShowAllDay`, `HighlightRed`, `ICS`, `BasicAuth`.
   - `Normalize()` ensures backwards compatibility / sane defaults even if some fields are missing in YAML.
-- [ ] Implement runtime cache directory under `/var/lib/epdcal/`:
-  - Per-ICS HTTP cache metadata (ETag, Last-Modified).
-  - Last rendered image buffers and/or PNG preview.
+- [-] Implement runtime cache directory under `/var/lib/epdcal/`:
+  - [x] Per-ICS HTTP cache metadata (ETag, Last-Modified) under `/var/lib/epdcal/ics-cache` (or `./cache/ics-cache` in `--debug` mode).
+  - [ ] Last rendered image buffers and/or PNG preview.
 
 ### 2.3 ICS Fetching & HTTP Caching
 
@@ -230,22 +230,35 @@ Planned repository layout (relative to project root):
 
 ### 2.11 Web UI & API
 
-- [ ] Implement HTTP server in [`internal/web/web.go`](internal/web/web.go):
-  - Bind address from config / `--listen` (default `127.0.0.1:8080`).
-  - Optional basic-auth; protect all endpoints except `/health`.
-- [ ] Endpoints:
-  - `GET /` – settings + status HTML UI.
-  - `GET /api/config` – return current config as JSON.
-  - `POST /api/config` – update config (with validation and persistence using `config.Save`).
-  - `POST /api/refresh` – trigger fetch + render + display.
-  - `POST /api/render` – trigger fetch + render (no display).
-  - `GET /preview.png` – serve last rendered preview.
-  - `GET /health` – simple OK response.
-- [ ] UI Features:
-  - Manage ICS URLs (add/remove).
-  - Set refresh interval, timezone, horizon days.
-  - Toggle all-day section, define red highlight keywords.
-  - Show last refresh time, next scheduled refresh time, last error summary.
+- [-] Implement HTTP server in [`internal/web/web.go`](internal/web/web.go):
+  - [x] Bind address from config / `--listen` (default `127.0.0.1:8080`).
+  - [ ] Optional basic-auth; protect all endpoints except `/health`.
+  - [x] Serve embedded Next.js static build via Go `embed.FS` (exported to `internal/web/static`).
+- [-] Endpoints:
+  - [ ] `GET /` – settings + status HTML UI.
+  - [ ] `GET /api/config` – return current config as JSON.
+  - [ ] `POST /api/config` – update config (with validation and persistence using `config.Save`).
+  - [ ] `POST /api/refresh` – trigger fetch + render + display.
+  - [ ] `POST /api/render` – trigger fetch + render (no display).
+  - [ ] `GET /preview.png` – serve last rendered preview.
+  - [x] `GET /health` – simple OK response.
+  - [x] `GET /api/events` – expanded occurrences JSON (TZ/recurrence/EXDATE/RECURRENCE-ID 반영).
+  - [x] `GET /api/battery` – 배터리 상태(퍼센트/전압) JSON (현재는 mock 랜덤 퍼센트).
+- [-] UI Features (Next.js /calendar 화면 기준):
+  - [x] 5주(35일) 달력 그리드 + 오늘/주말 강조, 이번 달 외 날짜 옅은 회색 처리.
+  - [x] 주 시작 요일(월/일) 토글 및 `config.yaml`의 `week_start` 값과 동기화.
+  - [x] `/api/events` occurrences 를 날짜별로 그룹핑해 셀 안에 일정 요약 표시:
+    - 종일 이벤트: `종일 · 제목` (시간 미표시).
+    - 일반 이벤트: `HH:MM~HH:MM 제목` (24시간제).
+  - [x] 헤더에 현재 날짜/요일/표시 타임존/현재 시각/마지막 업데이트 시각 표시.
+  - [x] `/calendar` 캔버스를 전자잉크 해상도(가로 1304px, 세로 1200px) 기준으로 고정, 작은 화면에서 스크롤.
+  - [x] 우측 상단 배터리 인디케이터:
+    - `/api/battery` 로부터 퍼센트 값을 읽어 5단계 레벨로 매핑 (empty/quarter/half/three-quarters/full).
+    - Font Awesome 아이콘 사용:
+      - `battery-empty`, `battery-quarter`, `battery-half`, `battery-three-quarters`, `battery-full`.
+    - 옆에 실제 퍼센트(`NN%`) 텍스트 표시.
+  - [ ] 설정/상태 편집용 Web UI (ICS URL 관리, refresh interval, timezone, horizon days 등).
+  - [ ] Web UI 에서 manual refresh / render 트리거 및 상태 표시.
 
 ### 2.12 Scheduler & Daemon Behavior
 
@@ -290,13 +303,13 @@ Planned repository layout (relative to project root):
 
 ## 4. Next Immediate Steps
 
-Planned next sequence (post-ICS Fetch/Parse/Expand wiring):
+Planned next sequence (post-ICS Fetch/Parse/Expand wiring & basic Web UI/calendar wiring):
 
 1. Add ICS parsing / expansion unit tests and fixtures in `internal/ics/parse_test.go`, `internal/ics/expand_test.go` + `internal/ics/testdata/`.
-2. Add basic HTTP server stub in [`internal/web/web.go`](internal/web/web.go) with `/health` and `/` placeholder page, using `Config.Listen` and optional BasicAuth (stub).
-3. Design and implement minimal text-only rendering in [`internal/render/render.go`](internal/render/render.go) and NRGBA->packed planes in [`internal/convert/pack.go`](internal/convert/pack.go).
-4. Wire up EPD integration in [`internal/epd/epd.go`](internal/epd/epd.go) and [`internal/epd/epd_cgo.go`](internal/epd/epd_cgo.go) with `--render-only` support for development without hardware.
-5. Flesh out Web UI endpoints (`/api/config`, `/api/render`, `/api/refresh`, `/preview.png`) and hook them into the core pipeline.
-6. Implement runtime cache directory usage under `/var/lib/epdcal/` for ICS HTTP metadata and rendered previews.
+2. Design and implement minimal text-only rendering in [`internal/render/render.go`](internal/render/render.go) and NRGBA->packed planes in [`internal/convert/pack.go`](internal/convert/pack.go).
+3. Wire up EPD integration in [`internal/epd/epd.go`](internal/epd/epd.go) and [`internal/epd/epd_cgo.go`](internal/epd/epd_cgo.go) with `--render-only` support for development without hardware.
+4. Flesh out Web UI management endpoints (`/api/config`, `/api/render`, `/api/refresh`, `/preview.png`) and hook them into the core pipeline.
+5. Extend runtime cache usage under `/var/lib/epdcal/` to also persist last rendered image buffers and preview PNG.
+6. (Optional, later) Replace mock battery reader in [`internal/battery/battery.go`](internal/battery/battery.go) with a PiSugar3 I2C-backed implementation on Raspberry Pi (using registers 0x22/0x23/0x2A).
 
 This document should be updated as tasks are completed or requirements evolve.
