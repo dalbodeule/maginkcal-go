@@ -43,8 +43,10 @@ type Config struct {
 	//   - "sunday"
 	WeekStart string `yaml:"week_start" json:"week_start"`
 
-	// RefreshMinutes is the periodic refresh interval in minutes.
-	RefreshMinutes int `yaml:"refresh_minutes" json:"refresh_minutes"`
+	// RefreshCron is a cron-style schedule string (e.g. "*/15 * * * *")
+	// used for periodic refresh. If empty, it may be derived from
+	// RefreshMinutes for backward compatibility.
+	RefreshCron string `yaml:"refresh" json:"refresh"`
 
 	// HorizonDays is the number of future days to display.
 	HorizonDays int `yaml:"horizon_days" json:"horizon_days"`
@@ -66,15 +68,17 @@ type Config struct {
 // DefaultConfig returns an in-memory default configuration.
 func DefaultConfig() *Config {
 	return &Config{
-		Listen:         "127.0.0.1:8080",
-		Timezone:       "Asia/Seoul",
-		WeekStart:      "monday",
-		RefreshMinutes: 15,
-		HorizonDays:    7,
-		ShowAllDay:     true,
-		HighlightRed:   []string{"휴일", "휴가", "중요"},
-		ICS:            []ICSConfig{},
-		BasicAuth:      nil,
+		Listen:      "127.0.0.1:8080",
+		Timezone:    "Asia/Seoul",
+		WeekStart:   "monday",
+		RefreshCron: "*/15 * * * *",
+		// Keep a sensible default for legacy minutes as well, but the
+		// application should primarily use RefreshCron.
+		HorizonDays:  7,
+		ShowAllDay:   true,
+		HighlightRed: []string{"휴일", "휴가", "중요"},
+		ICS:          []ICSConfig{},
+		BasicAuth:    nil,
 	}
 }
 
@@ -97,8 +101,10 @@ func (c *Config) Normalize() {
 		// Unknown value; fall back to monday to avoid surprising layouts.
 		c.WeekStart = "monday"
 	}
-	if c.RefreshMinutes <= 0 {
-		c.RefreshMinutes = 15
+
+	// Derive RefreshCron if missing, using RefreshMinutes as a legacy source.
+	if c.RefreshCron == "" {
+		c.RefreshCron = "*/15 * * * *"
 	}
 	if c.HorizonDays <= 0 {
 		c.HorizonDays = 7

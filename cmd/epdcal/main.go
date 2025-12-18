@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/robfig/cron/v3"
+
 	"epdcal/internal/capture"
 	"epdcal/internal/config"
 	ics "epdcal/internal/ics"
@@ -55,7 +57,7 @@ func main() {
 		"config_path", flags.configPath,
 		"listen", "http://"+conf.Listen,
 		"timezone", conf.Timezone,
-		"refresh_minutes", conf.RefreshMinutes,
+		"refresh_cron", conf.RefreshCron,
 		"horizon_days", conf.HorizonDays,
 		"show_all_day", conf.ShowAllDay,
 		"ics_count", len(conf.ICS),
@@ -107,12 +109,9 @@ func main() {
 		return
 	}
 
-	interval := time.Duration(conf.RefreshMinutes) * time.Minute
-	if interval <= 0 {
-		interval = 15 * time.Minute
-	}
-
-	appLog.Info("starting periodic refresh loop", "interval", interval.String())
+	appLog.Info("starting periodic refresh loop (cron)",
+		"refresh_cron", conf.RefreshCron,
+	)
 
 	// Initial immediate run.
 	if err := runRefreshCycle(ctx, conf, flags.debug); err != nil {
@@ -126,29 +125,51 @@ func main() {
 		}
 	}
 
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	// Use a cron-style scheduler for periodic refresh instead of a fixed ticker.
+	// This allows true "wall-clock aligned" schedules (e.g. */15 * * * *) and
+	// more complex patterns in the future.
+	loc, err := time.LoadLocation(conf.Timezone)
+	if err != nil {
+		appLog.Error("failed to load timezone, falling back to local", err, "timezone", conf.Timezone)
+		loc = time.Local
+	}
 
-	for {
+	c := cron.New(cron.WithLocation(loc))
+
+	_, err = c.AddFunc(conf.RefreshCron, func() {
 		select {
 		case <-ctx.Done():
-			appLog.Info("context canceled; stopping periodic refresh loop")
-			// Small delay for any future cleanup hooks (EPD sleep, etc.).
-			time.Sleep(100 * time.Millisecond)
-			appLog.Info("epdcal exiting")
+			// Context canceled; do not start new work.
 			return
-
-		case t := <-ticker.C:
-			appLog.Info("scheduled refresh tick", "time", t.Format(time.RFC3339))
-			if err := runRefreshCycle(ctx, conf, flags.debug); err != nil {
-				appLog.Error("scheduled refresh cycle failed", err)
-				continue
-			}
-			if err := runCapturePipeline(ctx, conf, flags); err != nil {
-				appLog.Error("chromium capture failed after scheduled refresh", err)
-			}
+		default:
 		}
+
+		now := time.Now().In(loc)
+		appLog.Info("scheduled refresh tick (cron)", "time", now.Format(time.RFC3339))
+
+		if err := runRefreshCycle(ctx, conf, flags.debug); err != nil {
+			appLog.Error("scheduled refresh cycle failed", err)
+			return
+		}
+		if err := runCapturePipeline(ctx, conf, flags); err != nil {
+			appLog.Error("chromium capture failed after scheduled refresh", err)
+		}
+	})
+	if err != nil {
+		appLog.Error("failed to add cron schedule", err, "refresh_cron", conf.RefreshCron)
+		os.Exit(1)
 	}
+
+	c.Start()
+	defer c.Stop()
+
+	// Block until context is canceled (SIGINT/SIGTERM).
+	<-ctx.Done()
+	appLog.Info("context canceled; stopping cron scheduler")
+	// Small delay for any future cleanup hooks (EPD sleep, etc.).
+	time.Sleep(100 * time.Millisecond)
+	appLog.Info("epdcal exiting")
+	return
 }
 
 func parseFlags() flagConfig {

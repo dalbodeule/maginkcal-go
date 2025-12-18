@@ -12,16 +12,22 @@
   - [`cmd/epdcal/main.go`](cmd/epdcal/main.go)
   - 플래그:
     - `--config`, `--listen`, `--once`, `--render-only`(예약), `--dump`, `--debug`
-  - SIGINT/SIGTERM 처리, context 취소, 주기적 refresh loop 구현
+  - SIGINT/SIGTERM 처리, context 취소
+  - **주기 실행은 crontab 스타일 스케줄(`refresh` 필드)로 동작**:
+    - robfig/cron v3 사용
+    - `refresh: "*/15 * * * *"` 등으로 정시 기준 간격 구성
 
 - **설정 로딩 및 디버그 모드**
   - [`internal/config/config.go`](internal/config/config.go)
   - 기본 설정 경로: `/etc/epdcal/config.yaml`
   - `--debug` 모드에서 `./config.yaml` 사용
   - 최초 실행 시 기본 config 생성 및 퍼미션 0600 설정 로직 구현
+  - 스케줄 필드:
+    - `refresh` (cron string) – 메인 스케줄
+    - `refresh_minutes` – **레거시**; 값이 있고 `refresh`가 비어 있으면 `"*/N * * * *"` 로 변환
 
 - **로깅**
-  - [`internal/log`](internal/log) 패키지에서 leveled logger 사용 (Info/Error 등)
+  - [`internal/log`](internal/log/log.go) 패키지에서 leveled logger 사용 (Info/Error 등)
 
 - **ICS Fetch + HTTP 캐시**
   - [`internal/ics/fetch.go`](internal/ics/fetch.go)
@@ -66,7 +72,7 @@
 - **Web UI `/calendar` 페이지**
   - [`webui/src/app/calendar/page.tsx`](webui/src/app/calendar/page.tsx)
   - 특징:
-    - 고정 캔버스 크기: 984x1304 레이아웃 (EPD 비율에 맞춘 레이아웃)
+    - 고정 캔버스 크기: 1304x1200 레이아웃 (EPD 비율에 맞춘 레이아웃)
     - `/api/events` 호출:
       - occurrence를 날짜별로 그룹핑
       - 월간 그리드(5주/6주) 생성
@@ -77,20 +83,45 @@
       - `/api/events`와 `/api/battery` 두 요청이 모두 성공하면 root div에 `data-ready="true"` 설정
       - headless Chromium 캡처에서 이 속성을 기준으로 렌더 완료 판단
 
-- **Chromium 캡처 헬퍼 및 테스트 경로**
+- **Chromium 캡처 헬퍼 및 캡처 파이프라인**
   - [`internal/capture/chromium.go`](internal/capture/chromium.go)
     - `CaptureCalendarPNG(opts)`:
-      - viewport(기본 984x1304) 설정
+      - viewport(기본 1304x1200) 설정
       - `/calendar` 페이지로 네비게이션
       - `[data-ready="true"]` element가 visible 될 때까지 대기
       - full screenshot(PNG) 저장
-  - [`cmd/epdcal/main.go`](cmd/epdcal/main.go) 의 `runCaptureTest`:
-    - `--once --dump` 모드에서:
-      - `runRefreshCycle` 수행 후
-      - Chromium 캡처 실행
-      - 출력 경로:
-        - 기본: `/var/lib/epdcal/preview.png`
-        - `--debug`: `./cache/preview.png`
+  - [`cmd/epdcal/main.go`](cmd/epdcal/main.go) 의 `runCapturePipeline`:
+    - refresh cycle 이후 항상 `/calendar` 캡처
+    - 출력 경로:
+      - 기본: `/var/lib/epdcal/preview.png`
+      - `--debug`: `./cache/preview.png`
+
+- **EPD SPI 드라이버 (periph.io 기반, C SDK 포팅)**
+  - [`internal/epd/epd_spi.go`](internal/epd/epd_spi.go)
+  - 기능:
+    - periph.io 기반 SPI + GPIO 초기화 (`Init(ctx)`):
+      - BCM 핀 매핑(C `DEV_Config.h` 기반):
+        - CS: 8(M1), 7(S1), 17(M2), 18(S2)
+        - DC: 13(M1S1), 22(M2S2)
+        - RST: 6(M1S1), 23(M2S2)
+        - BUSY: 5(M1), 19(S1), 27(M2), 24(S2)
+    - DEV 계층 포팅:
+      - `digitalWrite`, `digitalRead`, `delayUs`, `delayMs`
+      - `spiWriteByte`, `spiReadByte`
+    - EPD 시퀀스(C `EPD_12in48B_*.c` 기반) 포팅:
+      - Reset / SendCommand / SendData 헬퍼:
+        - M1/S1/M2/S2, M1M2, M1S1M2S2용 command/data 전송
+      - Busy-wait: `m1ReadBusy`, `m2ReadBusy`, `s1ReadBusy`, `s2ReadBusy`
+      - LUT 테이블 및 `setLUT()`:
+        - `lutVCOM1`, `lutWW1`, `lutBW1`, `lutWB1`, `lutBB1` 그대로 포팅
+      - 고수준 메서드:
+        - `InitPanel()` ↔ `EPD_12in48B_Init`
+        - `Clear()` ↔ `EPD_12in48B_Clear`
+        - `Display(black, red []byte)` ↔ `EPD_12in48B_Display`
+        - `TurnOnDisplay()` ↔ `EPD_12in48B_TurnOnDisplay`
+        - `Sleep()` ↔ `EPD_12in48B_Sleep`
+    - 현재:
+      - **하드웨어 시퀀스는 대부분 포팅 완료**, 아직 main 파이프라인과는 미연결 상태 (TODO)
 
 ### 0.2 아직 미구현 / 진행 중인 부분
 
@@ -100,12 +131,11 @@
   - 현재 로직은 구현되어 있으나, 다양한 타임존/경계 케이스에 대한 테스트 미완료
 - PNG → black/red packed plane 변환:
   - [`internal/convert/pack.go`](internal/convert/pack.go) 구현 필요
-- EPD C 드라이버 cgo 래핑 및 하드웨어 통합:
-  - [`internal/epd/epd_cgo.go`](internal/epd/epd_cgo.go), [`internal/epd/epd.go`](internal/epd/epd.go) 구현
+- EPD SPI 드라이버를 main 파이프라인에 연결:
+  - [`cmd/epdcal/main.go`](cmd/epdcal/main.go)에서 `Display`/`Sleep` 호출 wiring
   - `--render-only` 처리 포함
 - 정식 display 파이프라인 통합:
-  - refresh loop에서:
-    - ICS expand → `/calendar` 렌더 → 캡처 → PNG → packed plane → EPD 표시까지 연결
+  - refresh cron → ICS expand → `/calendar` 렌더 → 캡처 → PNG → packed plane → EPD 표시까지 연결
 - 설정/관리용 Web API:
   - `/api/config` (GET/POST), `/api/refresh`, `/api/render`, `GET /preview.png` (실제 파일 제공)
 - 런타임 캐시 확장:
@@ -126,7 +156,7 @@
   - 여러 개의 ICS(iCalendar) 구독 URL에서 이벤트 수집 (OAuth/Google API 사용 금지)
   - 타임존/반복/예외/RECURRENCE-ID 를 최대한 RFC 5545에 맞게 처리
   - 로컬 Web UI:
-    - 설정(ICS URL/타임존/리프레시 간격/표시 옵션) 관리
+    - 설정(ICS URL/타임존/리프레시 스케줄/표시 옵션) 관리
     - 수동 Refresh / Render Preview 트리거
     - 상태(최근 갱신 시간, 다음 스케줄, 마지막 오류) 노출
   - Waveshare 12.48" tri-color e-paper (B) 패널에 캘린더 이미지 출력
@@ -134,7 +164,7 @@
   - Go 내장 텍스트 렌더링 대신, Web UI(`/calendar`)를 **표준 레이아웃**으로 사용
   - Headless Chromium(chromedp)을 통해 `/calendar`를 1304x984(또는 1304x1200 캔버스)로 캡처 후,
     - PNG → 2-plane 1bpp packed buffer(black/red) 변환
-    - EPD C 드라이버를 통해 전송
+    - EPD SPI 드라이버를 통해 전송
 
 ---
 
@@ -143,12 +173,7 @@
 ### 2.1 하드웨어 / 디스플레이 드라이버
 
 - Waveshare 12.48" tri-color e-paper (B), 해상도 1304x984
-- C 헤더 `EPD_12in48B.h` 에서 제공하는 API 사용(cgo 연동):
-  - `UBYTE EPD_12in48B_Init(void);`
-  - `void EPD_12in48B_Clear(void);`
-  - `void EPD_12in48B_Display(const UBYTE *BlackImage, const UBYTE *RedImage);`
-  - `void EPD_12in48B_TurnOnDisplay(void);`
-  - `void EPD_12in48B_Sleep(void);`
+- C 코드(`EPD_12in48B.c/.h`)를 레퍼런스로 삼아 Go + periph.io 기반 SPI 드라이버 구현
 - 버퍼 사양:
   - width = 1304, height = 984
   - stride = 163 bytes/row (1304 / 8)
@@ -161,12 +186,12 @@
     - `mask = 0x80 >> (x & 7)`
   - 초기 버퍼는 0xFF(white)로 채움
   - bit=0 → 잉크(black/red), bit=1 → white
-  - Red plane은 Go에서 0=red 로 유지, C 라이브러리에서 전송 시 `~RedImageByte` 수행
+  - Red plane은 Go에서 0=red 로 유지, 패널로 전송 시 bit 반전(~) 적용
 
 ### 2.2 ICS 구독 (OAuth 금지)
 
 - 여러 ICS URL 지원
-- 주기적 fetch (기본 15분) + Web UI에서 on-demand fetch
+- 주기적 fetch (cron 스케줄 기반) + Web UI에서 on-demand fetch
 - HTTP 캐싱:
   - ETag, Last-Modified 저장
   - If-None-Match / If-Modified-Since 헤더 사용
@@ -224,7 +249,7 @@
   - `GET /health` – healthcheck (인증 제외)
 - 설정 항목:
   - ICS URL 추가/삭제
-  - refresh interval (분)
+  - refresh 스케줄 (cron string: 예 `*/15 * * * *`)
   - timezone
   - 표시 옵션:
     - days range (예: 7일)
@@ -274,13 +299,10 @@
 
 ### 2.7 디스플레이 파이프라인
 
-- cgo를 통해 C 드라이버 래핑:
-  - `EPD_12in48B_Init()`
-  - 필요 시 `EPD_12in48B_Clear()`
-  - `EPD_12in48B_Display(black, red)`
-  - `EPD_12in48B_Sleep()`
+- periph.io 기반 SPI 드라이버로 Waveshare 패널 구동:
+  - Init/Reset → LUT 설정 → Display → Sleep
 - Go `internal/epd` 패키지에서 고수준 API 제공:
-  - Init / Clear / Display / Sleep
+  - InitPanel / Clear / Display / Sleep
   - `--render-only` 옵션으로 실제 하드웨어 출력 비활성화 가능(개발/테스트용)
 
 ---
@@ -314,9 +336,9 @@ internal/ics/expand.go
 internal/model/model.go
 internal/convert/pack.go
 internal/epd/epd.go
-internal/epd/epd_cgo.go
+internal/epd/epd_spi.go
 internal/capture/chromium.go
-waveshare/...                     # vendored C driver
+waveshare/...                     # (초기 개발 시 참고용 C SDK, 빌드에는 미사용 가능)
 README.md
 progress.md
 systemd/epdcal.service
@@ -370,8 +392,10 @@ systemd/epdcal.service
   - 예: `github.com/teambition/rrule-go`
   - ICS의 RRULE string을 rrule-go로 변환
   - UNTIL 값의 타임존/UTC 처리(RFC 5545 기준)를 최대한 준수
-- 제한사항:
-  - 특수/희귀 RRULE, 복잡한 BYSETPOS 등은 README에 명시적 "Known limitations"로 기술
+- 스케줄링:
+  - `github.com/robfig/cron/v3`:
+    - `config.refresh` cron string을 기반으로 주기 실행
+    - 타임존(Location) 지정
 
 ---
 
@@ -381,7 +405,7 @@ systemd/epdcal.service
 
 - `--config /path/to/config.yaml`
 - `--listen 127.0.0.1:8080`
-- `--once` : 한 번 fetch+render(+display) 수행 후 종료
+- `--once` : 한 번 fetch+render(+capture/display) 수행 후 종료
 - `--render-only` : 디스플레이 하드웨어는 건드리지 않음
 - `--dump` : `black.bin`, `red.bin`, `preview.png` 등 디버그 아티팩트 출력
 - `--debug` : `/etc` / `/var/lib` 대신 로컬 `./config.yaml`, `./cache` 사용
@@ -419,7 +443,7 @@ systemd/epdcal.service
   - EXDATE로 제거된 occurrence가 나타나지 않아야 함
   - override 인스턴스가 중복 없이 정확히 한 번만 표시
 - Web UI:
-  - ICS URL 업데이트 후 서비스 재시작 없이 refresh 동작
+  - ICS URL 및 refresh cron 업데이트 후 서비스 재시작 없이 refresh 동작
   - `POST /api/refresh` / `POST /api/render` 가 기대대로 동작
 - 보안:
   - OAuth 토큰, Google API, token.pickle 등 **전혀 사용하지 않음**
@@ -434,9 +458,10 @@ systemd/epdcal.service
       - **현황**: 로직 구현은 되어 있으나 다양한 타임존/경계 케이스에 대한 테스트 미완료
 - [x] Web UI(`/calendar`) 기본 레이아웃 및 이벤트 리스트 구현
 - [x] headless Chromium(chromedp) 기반 PNG 캡처 구현  
-      - `--once --dump`에서 `/calendar` → `preview.png` 캡처 테스트 경로 동작
+      - `--once --dump` 또는 정규 스케줄에서 `/calendar` → `preview.png` 캡처
+- [x] 주기 스케줄을 cron string(`config.refresh`) 기반으로 변경 (`robfig/cron/v3`)
 - [ ] PNG → black/red packed plane 변환(`internal/convert/pack.go`)
-- [ ] Waveshare C 드라이버를 cgo로 래핑(`internal/epd/`)
+- [x] Waveshare C 드라이버를 참고하여 periph.io 기반 SPI 구현(`internal/epd/epd_spi.go`)
 - [ ] display 파이프라인 통합 (fetch → expand → render → capture → pack → display)
 - [ ] Web API (`/api/config`, `/api/refresh`, `/api/render`, `/preview.png`) 구현
 - [ ] systemd 서비스 유닛(`systemd/epdcal.service`) 작성
