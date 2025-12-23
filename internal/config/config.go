@@ -43,6 +43,12 @@ type Config struct {
 	//   - "sunday"
 	WeekStart string `yaml:"week_start" json:"week_start"`
 
+	// Rotation specifies how the captured /calendar image should be rotated
+	// before being packed for the physical panel. Allowed values (degrees):
+	//   - 90  (default, rotate clockwise)
+	//   - 270 (rotate counter-clockwise)
+	Rotation int `yaml:"rotation" json:"rotation"`
+
 	// RefreshCron is a cron-style schedule string (e.g. "*/15 * * * *")
 	// used for periodic refresh. If empty, it may be derived from
 	// RefreshMinutes for backward compatibility.
@@ -71,6 +77,7 @@ func DefaultConfig() *Config {
 		Listen:      "127.0.0.1:8080",
 		Timezone:    "Asia/Seoul",
 		WeekStart:   "monday",
+		Rotation:    90,
 		RefreshCron: "*/15 * * * *",
 		// Keep a sensible default for legacy minutes as well, but the
 		// application should primarily use RefreshCron.
@@ -102,7 +109,20 @@ func (c *Config) Normalize() {
 		c.WeekStart = "monday"
 	}
 
-	// Derive RefreshCron if missing, using RefreshMinutes as a legacy source.
+	// Rotation default & validation.
+	// We currently support 90 (clockwise) and 270 (counter-clockwise).
+	switch c.Rotation {
+	case 90, 270:
+		// ok
+	case 0:
+		// 0은 "회전 없음" 의미로 사용할 수 있지만, 현재 파이프라인은
+		// 세로 캡처 이미지를 전제로 하므로 기본값인 90도로 강제한다.
+		c.Rotation = 90
+	default:
+		c.Rotation = 90
+	}
+
+	// Derive RefreshCron if missing.
 	if c.RefreshCron == "" {
 		c.RefreshCron = "*/15 * * * *"
 	}

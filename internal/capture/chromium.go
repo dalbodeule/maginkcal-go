@@ -3,6 +3,7 @@ package capture
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -66,8 +67,19 @@ func CaptureCalendarPNG(parentCtx context.Context, opts CaptureOptions) error {
 		opts.Timeout = time.Duration(DefaultTimeoutSec) * time.Second
 	}
 
+	dp_opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.Flag("headless", true),
+		chromedp.Flag("no-sandbox", true),
+		chromedp.Flag("disable-gpu", true),
+		chromedp.Flag("disable-setuid-sandbox", true),
+		chromedp.Flag("disable-dev-shm-usage", true),
+	)
+
+	allocCtx, allocCancel := chromedp.NewExecAllocator(parentCtx, dp_opts...)
+	defer allocCancel()
+
 	// Create a new chromedp context.
-	ctx, cancel := chromedp.NewContext(parentCtx)
+	ctx, cancel := chromedp.NewContext(allocCtx, chromedp.WithLogf(log.Printf))
 	defer cancel()
 
 	// Apply timeout to the entire capture sequence.
@@ -81,8 +93,6 @@ func CaptureCalendarPNG(parentCtx context.Context, opts CaptureOptions) error {
 		// Wait until /calendar signals that it has finished loading data
 		// and rendering via data-ready="true".
 		chromedp.WaitVisible(`[data-ready="true"]`, chromedp.ByQuery),
-		// Small extra delay to allow final paints.
-		chromedp.Sleep(500 * time.Millisecond),
 		chromedp.FullScreenshot(&png, 100),
 	}
 

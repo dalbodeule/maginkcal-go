@@ -341,7 +341,7 @@ func runCapturePipeline(parentCtx context.Context, conf *config.Config, flags fl
 		OutputPath: outPath,
 		Width:      0, // use defaults
 		Height:     0,
-		Timeout:    0,
+		Timeout:    120 * time.Second,
 	}
 
 	if err := capture.CaptureCalendarPNG(ctx, opts); err != nil {
@@ -373,7 +373,7 @@ func runCapturePipeline(parentCtx context.Context, conf *config.Config, flags fl
 		nrgba = tmp
 	}
 
-	black, red, err := convert.PackNRGBA(nrgba)
+	black, red, err := convert.PackNRGBA(nrgba, conf.Rotation)
 	if err != nil {
 		return err
 	}

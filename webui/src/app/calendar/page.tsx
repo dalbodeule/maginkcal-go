@@ -159,10 +159,10 @@ export default function CalendarPage() {
         {/* Header */}
         <header className="mb-4 border-b border-slate-200 pb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
+            <h1 className="text-[48px] sm:text-3xl font-bold tracking-tight">
               {formatKoreanDate(today)}
             </h1>
-            <p className="mt-1 text-xs sm:text-sm text-slate-500">
+            <p className="mt-1 text-[36px] sm:text-sm text-slate-500">
               {formatKoreanWeekday(today)} · {displayTimezone} ·{" "}
               {now.toLocaleTimeString("ko-KR", {
                 hour: "2-digit",
@@ -170,7 +170,7 @@ export default function CalendarPage() {
                 hour12: false,
               })}
             </p>
-            <p className="mt-1 text-[11px] sm:text-xs text-slate-500">
+            <p className="mt-1 text-[24px] sm:text-xs text-slate-500">
               마지막 업데이트:{" "}
               {lastUpdatedAt ? formatKoreanDateTime(lastUpdatedAt) : "로딩 중..."}
             </p>
@@ -186,7 +186,7 @@ export default function CalendarPage() {
         {/* Calendar */}
         <section className="flex-1 flex flex-col space-y-2">
           {/* 요일 헤더 */}
-          <div className="grid grid-cols-7 text-center text-[11px] sm:text-xs font-semibold text-slate-500">
+          <div className="grid grid-cols-7 text-center text-[24px] sm:text-xs font-semibold text-slate-500">
             {weekdayLabels.map((w, idx) => {
               const isWeekend =
                 (weekStart === "monday" && (idx === 5 || idx === 6)) ||
@@ -235,14 +235,14 @@ export default function CalendarPage() {
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-baseline gap-1">
                       <span
-                        className={`text-[11px] sm:text-xs font-semibold ${dateColorClass} ${
+                        className={`text-[16px] sm:text-xs font-semibold ${dateColorClass} ${
                           day.isToday ? "underline decoration-2" : ""
                         }`}
                       >
                         {day.label}
                       </span>
                       {day.isToday && (
-                        <span className="text-[10px] text-slate-500">
+                        <span className="text-[16px] text-slate-500">
                           오늘
                         </span>
                       )}
@@ -252,14 +252,14 @@ export default function CalendarPage() {
                   {/* 일정 내용 영역: /api/events 데이터 렌더링 */}
                   <div className="flex-1 space-y-0.5">
                     {events.length === 0 ? (
-                      <p className="text-[9px] sm:text-[10px] text-slate-300">
+                      <p className="text-[16px] sm:text-[10px] text-slate-300">
                         일정 없음
                       </p>
                     ) : (
                       events.slice(0, 3).map((ev, i) => (
                         <p
                           key={i}
-                          className="text-[9px] sm:text-[10px] text-slate-700 truncate"
+                          className="text-[16px] sm:text-[10px] text-slate-700 truncate"
                         >
                           {formatEventLine(ev)}
                         </p>

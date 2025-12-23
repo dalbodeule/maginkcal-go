@@ -12,8 +12,6 @@ import (
 
 	"periph.io/x/conn/v3/gpio"
 	"periph.io/x/conn/v3/gpio/gpioreg"
-	"periph.io/x/conn/v3/spi"
-	"periph.io/x/conn/v3/spi/spireg"
 	"periph.io/x/host/v3"
 )
 
@@ -57,7 +55,9 @@ const (
 // Dev is the Go equivalent of the C DEV_* layer. It wraps the SPI bus and
 // all GPIO pins required by the 12.48" B panel.
 type Dev struct {
-	spi spi.Conn
+	// Software SPI pins (bit-banged to match DEV_Config.c behavior).
+	sck  gpio.PinOut
+	mosi gpio.PinOut
 
 	// Chip selects
 	m1CS gpio.PinOut
@@ -95,24 +95,9 @@ var defaultDriver *Driver
 // It is the pure-Go equivalent of DEV_ModuleInit + parts of EPD_12in48B_Init
 // that deal with basic GPIO/SPI setup (but not the panel register sequences).
 func Init(ctx context.Context) (*Driver, error) {
-	// Initialize periph.io host.
+	// Initialize periph.io host so we can use GPIO.
 	if _, err := host.Init(); err != nil {
 		return nil, fmt.Errorf("epd: periph host init failed: %w", err)
-	}
-
-	// Open the default SPI port. On Raspberry Pi this is typically /dev/spidev0.0.
-	port, err := spireg.Open("")
-	if err != nil {
-		return nil, fmt.Errorf("epd: failed to open SPI port: %w", err)
-	}
-
-	// Connect with a conservative frequency and mode 0.
-	// The exact maxHz can be tuned later based on C SDK defaults.
-	const maxHz = 2_000_000 // 2MHz
-	spiConn, err := port.Connect(maxHz, spi.Mode0, 8)
-	if err != nil {
-		_ = port.Close()
-		return nil, fmt.Errorf("epd: failed to connect SPI: %w", err)
 	}
 
 	// Helper to resolve a BCM GPIO number via periph.
@@ -140,15 +125,19 @@ func Init(ctx context.Context) (*Driver, error) {
 	}
 
 	dev := &Dev{
-		spi:     spiConn,
-		m1CS:    mustGPIOOut(bcmEPDM1CS, gpio.High),
-		s1CS:    mustGPIOOut(bcmEPDS1CS, gpio.High),
-		m2CS:    mustGPIOOut(bcmEPDM2CS, gpio.High),
-		s2CS:    mustGPIOOut(bcmEPDS2CS, gpio.High),
-		m1s1DC:  mustGPIOOut(bcmEPDM1S1DC, gpio.Low),
-		m2s2DC:  mustGPIOOut(bcmEPDM2S2DC, gpio.Low),
-		m1s1RST: mustGPIOOut(bcmEPDM1S1RST, gpio.High),
-		m2s2RST: mustGPIOOut(bcmEPDM2S2RST, gpio.High),
+		// Software SPI pins on the same BCM pins as the original C driver.
+		sck:  mustGPIOOut(bcmEPDSCK, gpio.Low),
+		mosi: mustGPIOOut(bcmEPDMOSI, gpio.Low),
+
+		m1CS: mustGPIOOut(bcmEPDM1CS, gpio.High),
+		s1CS: mustGPIOOut(bcmEPDS1CS, gpio.High),
+		m2CS: mustGPIOOut(bcmEPDM2CS, gpio.High),
+		s2CS: mustGPIOOut(bcmEPDS2CS, gpio.High),
+		// Match epdconfig.module_init defaults: RST low, DC high.
+		m1s1DC:  mustGPIOOut(bcmEPDM1S1DC, gpio.High),
+		m2s2DC:  mustGPIOOut(bcmEPDM2S2DC, gpio.High),
+		m1s1RST: mustGPIOOut(bcmEPDM1S1RST, gpio.Low),
+		m2s2RST: mustGPIOOut(bcmEPDM2S2RST, gpio.Low),
 		m1BUSY:  mustGPIOIn(bcmEPDM1BUSY),
 		s1BUSY:  mustGPIOIn(bcmEPDS1BUSY),
 		m2BUSY:  mustGPIOIn(bcmEPDM2BUSY),
@@ -163,12 +152,7 @@ func Init(ctx context.Context) (*Driver, error) {
 // Close releases SPI and unexports pins. It is the rough equivalent of
 // DEV_ModuleExit in the C layer.
 func (d *Driver) Close() error {
-	// periph.io pins don't need explicit close, but the SPI port does.
-	// However, spi.Conn does not expose Close directly; the underlying
-	// port may implement io.Closer via type assertion.
-	if closer, ok := d.dev.spi.(interface{ Close() error }); ok {
-		return closer.Close()
-	}
+	// No special cleanup required; GPIO pins are managed by periph.io.
 	return nil
 }
 
@@ -199,21 +183,25 @@ func delayMs(ms uint32) {
 
 // spiWriteByte mirrors DEV_SPI_WriteByte.
 func (d *Dev) spiWriteByte(b byte) error {
-	// periph.io requires a write+read buffer; RX can be nil when not needed.
-	tx := []byte{b}
-	return d.spi.Tx(tx, nil)
-}
+	// Bit-banged SPI Mode 0, mirroring DEV_SPI_WriteByte in DEV_Config.c.
+	for i := 0; i < 8; i++ {
+		// Clock low
+		digitalWrite(d.sck, false)
 
-// spiReadByte mirrors DEV_SPI_ReadByte(Reg).
-// In the original C code it is used as "temp = DEV_SPI_ReadByte(0x00);",
-// i.e. sending a dummy byte and reading one back.
-func (d *Dev) spiReadByte(dummy byte) (byte, error) {
-	tx := []byte{dummy}
-	rx := make([]byte, 1)
-	if err := d.spi.Tx(tx, rx); err != nil {
-		return 0, err
+		// Set MOSI according to MSB
+		if b&0x80 != 0 {
+			digitalWrite(d.mosi, true)
+		} else {
+			digitalWrite(d.mosi, false)
+		}
+		b <<= 1
+
+		delayUs(10)
+		// Clock high
+		digitalWrite(d.sck, true)
+		delayUs(10)
 	}
-	return rx[0], nil
+	return nil
 }
 
 // --- High-level wiring helpers & EPD sequence port (from C reference) ---
@@ -460,6 +448,15 @@ func (d *Driver) s2ReadBusy() {
 	delayMs(200)
 }
 
+// m1ReadTemperature was originally a port of M1_ReadTemperature() from
+// epd12in48b_V2.py, which reads back a byte over a bit-banged MOSI line and
+// programs it into registers 0xE0/0xE5. Our Go driver currently doesn't rely
+// on this value and InitPanel() no longer calls this helper, so we provide a
+// no-op stub to keep the symbol while avoiding SPI readback complexity.
+func (d *Driver) m1ReadTemperature() error {
+	return nil
+}
+
 //
 // LUT tables & EPD_SetLut port
 //
@@ -593,8 +590,9 @@ func (d *Driver) setLUT() error {
 //
 
 // panelVersion corresponds to the "Version" global in the C code.
-// For now we default to 1 (original sequence).
-const panelVersion = 1
+// Default to 2 to match Waveshare's epd12in48b_V2.py sequence, which is
+// known to work on the current hardware.
+const panelVersion = 2
 
 // InitPanel is the Go equivalent of EPD_12in48B_Init(void).
 func (d *Driver) InitPanel() error {
@@ -887,8 +885,14 @@ func (d *Driver) InitPanel() error {
 			return err
 		}
 
-		// Temperature read is optional; for now we can skip sending it back (0xe0/e5)
-		// or implement a direct port later.
+		// NOTE:
+		// The original Python/C V2 code calls M1_ReadTemperature() here, which
+		// reads a byte via bit-banged SPI on the MOSI line (DEV_SPI_ReadByte).
+		// Our Go driver currently uses the kernel SPI driver's MISO input, but
+		// the panel board only wires MOSI, so the readback value would be
+		// undefined. To avoid programming a bogus temperature into 0xE0/0xE5,
+		// we skip this step for now. This keeps the digital sequence closer to
+		// DEV_Config.c behavior while we still drive all segments correctly.
 	default:
 		return fmt.Errorf("epd: unsupported panel version %d", panelVersion)
 	}
@@ -897,52 +901,31 @@ func (d *Driver) InitPanel() error {
 }
 
 // Clear is the Go equivalent of EPD_12in48B_Clear.
+// The order of segment writes matches epd12in48b_V2.py (S2, M2, M1, S1).
 func (d *Driver) Clear() error {
-	// M1 part 648*492
-	if err := d.m1SendCommand(0x10); err != nil {
+	// S2 part 648*492 (top-left)
+	if err := d.s2SendCommand(0x10); err != nil {
 		return err
 	}
-	for y := 492; y < 984; y++ {
+	for y := 0; y < 492; y++ {
 		for x := 0; x < 81; x++ {
-			if err := d.m1SendData(0xff); err != nil {
+			if err := d.s2SendData(0xff); err != nil {
 				return err
 			}
 		}
 	}
-	if err := d.m1SendCommand(0x13); err != nil {
+	if err := d.s2SendCommand(0x13); err != nil {
 		return err
 	}
-	for y := 492; y < 984; y++ {
+	for y := 0; y < 492; y++ {
 		for x := 0; x < 81; x++ {
-			if err := d.m1SendData(0x00); err != nil {
+			if err := d.s2SendData(0x00); err != nil {
 				return err
 			}
 		}
 	}
 
-	// S1 part 656*492
-	if err := d.s1SendCommand(0x10); err != nil {
-		return err
-	}
-	for y := 492; y < 984; y++ {
-		for x := 81; x < 163; x++ {
-			if err := d.s1SendData(0xff); err != nil {
-				return err
-			}
-		}
-	}
-	if err := d.s1SendCommand(0x13); err != nil {
-		return err
-	}
-	for y := 492; y < 984; y++ {
-		for x := 81; x < 163; x++ {
-			if err := d.s1SendData(0x00); err != nil {
-				return err
-			}
-		}
-	}
-
-	// M2 part 656*492
+	// M2 part 656*492 (top-right)
 	if err := d.m2SendCommand(0x10); err != nil {
 		return err
 	}
@@ -964,23 +947,45 @@ func (d *Driver) Clear() error {
 		}
 	}
 
-	// S2 part 648*492
-	if err := d.s2SendCommand(0x10); err != nil {
+	// M1 part 648*492 (bottom-left)
+	if err := d.m1SendCommand(0x10); err != nil {
 		return err
 	}
-	for y := 0; y < 492; y++ {
+	for y := 492; y < 984; y++ {
 		for x := 0; x < 81; x++ {
-			if err := d.s2SendData(0xff); err != nil {
+			if err := d.m1SendData(0xff); err != nil {
 				return err
 			}
 		}
 	}
-	if err := d.s2SendCommand(0x13); err != nil {
+	if err := d.m1SendCommand(0x13); err != nil {
 		return err
 	}
-	for y := 0; y < 492; y++ {
+	for y := 492; y < 984; y++ {
 		for x := 0; x < 81; x++ {
-			if err := d.s2SendData(0x00); err != nil {
+			if err := d.m1SendData(0x00); err != nil {
+				return err
+			}
+		}
+	}
+
+	// S1 part 656*492 (bottom-right)
+	if err := d.s1SendCommand(0x10); err != nil {
+		return err
+	}
+	for y := 492; y < 984; y++ {
+		for x := 81; x < 163; x++ {
+			if err := d.s1SendData(0xff); err != nil {
+				return err
+			}
+		}
+	}
+	if err := d.s1SendCommand(0x13); err != nil {
+		return err
+	}
+	for y := 492; y < 984; y++ {
+		for x := 81; x < 163; x++ {
+			if err := d.s1SendData(0x00); err != nil {
 				return err
 			}
 		}
@@ -1132,5 +1137,16 @@ func (d *Driver) Sleep() error {
 		return err
 	}
 	delayMs(300)
+
+	// Approximate epdconfig.module_exit(): pull reset and DC low, chip selects high.
+	digitalWrite(d.dev.m2s2RST, false)
+	digitalWrite(d.dev.m1s1RST, false)
+	digitalWrite(d.dev.m2s2DC, false)
+	digitalWrite(d.dev.m1s1DC, false)
+	digitalWrite(d.dev.s1CS, true)
+	digitalWrite(d.dev.s2CS, true)
+	digitalWrite(d.dev.m1CS, true)
+	digitalWrite(d.dev.m2CS, true)
+
 	return nil
 }
