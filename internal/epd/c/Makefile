@@ -28,12 +28,15 @@ CC      ?= gcc
 AR      ?= ar
 CFLAGS  ?= -O2 -Wall
 CFLAGS  += -I.
+CFLAGS  += -DUSE_LGPIO_LIB
 
 # 필요에 따라 소스 파일 목록을 수정하세요.
-# Waveshare 12.48B 드라이버 기준 예시:
+# 현재 디렉터리 실제 파일 이름:
+#   DEV_Config.c
+#   EPD_12in48b.c
 SRCS = \
 	DEV_Config.c \
-	EPD_12in48B.c
+	EPD_12in48b.c
 
 OBJS = $(SRCS:.c=.o)
 LIB  = libepddrv.a

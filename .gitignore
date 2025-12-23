@@ -331,3 +331,7 @@ $RECYCLE.BIN/
 epdcal
 config.yaml
 cache/
+*.o
+*.so
+*.a
+webui.zip

@@ -33,7 +33,7 @@ package epd
 #cgo linux LDFLAGS: -L${SRCDIR}/c -lepddrv -llgpio
 
 #include <stdint.h>
-#include "EPD_12in48B.h"
+#include "EPD_12in48b.h"
 #include "DEV_Config.h"
 */
 import "C"
