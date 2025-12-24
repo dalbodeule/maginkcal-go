@@ -152,17 +152,17 @@ export default function CalendarPage() {
       data-ready={ready ? "true" : "false"}
       className={`${nanumGothic.className} min-h-screen bg-slate-100 text-slate-900 flex items-center justify-center overflow-auto`}
     >
-      <main className="w-[984px] h-[1308px] rounded-xl bg-white shadow-sm px-4 py-5 sm:px-6 sm:py-6 flex flex-col relative">
+      <main className="w-[984px] h-[1308px] rounded-xl bg-white shadow-sm px-6 py-6 flex flex-col relative">
         {/* Battery indicator (top-right, 5-step based on FontAwesome semantics) */}
         <BatteryIndicator percent={batteryPercent} />
 
         {/* Header */}
         <header className="mb-4 border-b border-slate-200 pb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h1 className="text-[48px] sm:text-3xl font-bold tracking-tight">
+            <h1 className="text-[64px] sm:text-4xl font-extrabold tracking-tight">
               {formatKoreanDate(today)}
             </h1>
-            <p className="mt-1 text-[36px] sm:text-sm text-slate-500">
+            <p className="mt-1 text-[40px] sm:text-base text-slate-700 font-semibold">
               {formatKoreanWeekday(today)} · {displayTimezone} ·{" "}
               {now.toLocaleTimeString("ko-KR", {
                 hour: "2-digit",
@@ -170,7 +170,7 @@ export default function CalendarPage() {
                 hour12: false,
               })}
             </p>
-            <p className="mt-1 text-[24px] sm:text-xs text-slate-500">
+            <p className="mt-1 text-[28px] sm:text-sm text-slate-700 font-medium">
               마지막 업데이트:{" "}
               {lastUpdatedAt ? formatKoreanDateTime(lastUpdatedAt) : "로딩 중..."}
             </p>
@@ -186,7 +186,7 @@ export default function CalendarPage() {
         {/* Calendar */}
         <section className="flex-1 flex flex-col space-y-2">
           {/* 요일 헤더 */}
-          <div className="grid grid-cols-7 text-center text-[24px] sm:text-xs font-semibold text-slate-500">
+          <div className="grid grid-cols-7 text-center text-[28px] sm:text-sm font-semibold text-slate-500">
             {weekdayLabels.map((w, idx) => {
               const isWeekend =
                 (weekStart === "monday" && (idx === 5 || idx === 6)) ||
@@ -235,14 +235,14 @@ export default function CalendarPage() {
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-baseline gap-1">
                       <span
-                        className={`text-[16px] sm:text-xs font-semibold ${dateColorClass} ${
+                        className={`text-[22px] sm:text-base font-bold ${dateColorClass} ${
                           day.isToday ? "underline decoration-2" : ""
                         }`}
                       >
                         {day.label}
                       </span>
                       {day.isToday && (
-                        <span className="text-[16px] text-slate-500">
+                        <span className="text-[20px] text-slate-700 font-semibold">
                           오늘
                         </span>
                       )}
@@ -252,14 +252,14 @@ export default function CalendarPage() {
                   {/* 일정 내용 영역: /api/events 데이터 렌더링 */}
                   <div className="flex-1 space-y-0.5">
                     {events.length === 0 ? (
-                      <p className="text-[16px] sm:text-[10px] text-slate-300">
+                      <p className="text-[18px] sm:text-xs text-slate-400 font-medium">
                         일정 없음
                       </p>
                     ) : (
                       events.slice(0, 3).map((ev, i) => (
                         <p
                           key={i}
-                          className="text-[16px] sm:text-[10px] text-slate-700 truncate"
+                          className="text-[18px] sm:text-xs text-slate-900 font-semibold truncate"
                         >
                           {formatEventLine(ev)}
                         </p>
@@ -418,19 +418,19 @@ function batteryLevelFromPercent(p: number | null): BatteryLevel {
 function BatteryIndicator(props: { percent: number | null }) {
   const level = batteryLevelFromPercent(props.percent);
 
-  let icon = (<FontAwesomeIcon icon={faBatteryEmpty} className="text-[16px]" />);
+  let icon = (<FontAwesomeIcon icon={faBatteryEmpty} className="text-[20px]" />);
   switch (level) {
     case "quarter":
-      icon = (<FontAwesomeIcon icon={faBatteryQuarter} className="text-[16px]" />)
+      icon = (<FontAwesomeIcon icon={faBatteryQuarter} className="text-[20px]" />)
       break;
     case "half":
-      icon = (<FontAwesomeIcon icon={faBatteryHalf} className="text-[16px]" />)
+      icon = (<FontAwesomeIcon icon={faBatteryHalf} className="text-[20px]" />)
       break;
     case "three-quarters":
-      icon = (<FontAwesomeIcon icon={faBatteryThreeQuarters} className="text-[16px]" />)
+      icon = (<FontAwesomeIcon icon={faBatteryThreeQuarters} className="text-[20px]" />)
       break;
     case "full":
-      icon = (<FontAwesomeIcon icon={faBatteryFull} className="text-[16px]" />)
+      icon = (<FontAwesomeIcon icon={faBatteryFull} className="text-[20px]" />)
       break;
   }
 
@@ -438,7 +438,7 @@ function BatteryIndicator(props: { percent: number | null }) {
     <div className="absolute top-3 right-4 flex items-center gap-1 text-slate-700">
       {(icon)}
       {props.percent != null && (
-        <span className="text-[16px] font-medium">{props.percent}%</span>
+        <span className="text-[20px] font-bold">{props.percent}%</span>
       )}
     </div>
   );

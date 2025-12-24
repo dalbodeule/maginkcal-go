@@ -169,13 +169,18 @@ const (
 // classifyPixel decides whether a pixel should be black, red, or white on the
 // tri-color panel.
 //
-// 기준(경험적):
+// 기준(조정 버전):
 //
 //   - 밝기 Y = 0.299R + 0.587G + 0.114B
 //   - redness = R - max(G, B)
-//   - 매우 어두운 픽셀(Y < 64) → black
-//   - 충분히 밝고(redness > 32, R > 128) → red
-//   - 나머지 → white
+//   - 충분히 "빨간" 픽셀 → red
+//   - 나머지에서 "회색 포함 어두운 계열" → black
+//   - 그 외 → white
+//
+// 기존 로직(Y < 64)에서는 다크 그레이/중간 그레이가 white로 빠져서
+// 패널에서 거의 보이지 않았다. e-paper는 실제로는 흰/검/빨간 3색만
+// 있기 때문에, 회색 영역을 살리려면 "조금만 어두워도 black으로" 보는
+// 쪽이 낫다.
 func classifyPixel(c color.NRGBA) inkColor {
 	r, g, b := float64(c.R), float64(c.G), float64(c.B)
 
@@ -189,15 +194,21 @@ func classifyPixel(c color.NRGBA) inkColor {
 	}
 	redness := r - maxGB
 
-	// 어둡고 채도가 높지 않은 픽셀은 black으로.
-	if y < 64 {
-		return inkBlack
-	}
-
-	// 충분히 빨간 계열은 red로.
-	if r > 128 && redness > 32 {
+	// 1) 먼저 "충분히 빨간" 픽셀을 red로 보낸다.
+	//    - 밝기도 어느 정도 있고 (y >= 80)
+	//    - R 이 강하고 (r > 150)
+	//    - G/B 대비로도 빨강이 우세한 경우(redness > 32)
+	if y >= 80 && r > 150 && redness > 32 {
 		return inkRed
 	}
 
+	// 2) 그 외에 "약간만 어두워도" black으로 본다.
+	//    - 회색 영역도 black으로 보내서 e-paper에서 눈에 보이도록.
+	//    - 너무 밝은 영역(y >= 210 정도)는 white 로 남긴다.
+	if y < 210 {
+		return inkBlack
+	}
+
+	// 3) 나머지는 white.
 	return inkWhite
 }
