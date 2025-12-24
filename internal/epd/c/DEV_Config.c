@@ -39,6 +39,14 @@ int SPI_Handle;
 
 SOFTWARE_SPI software_spi;
 
+// Panel version selector used by EPD_12in48b.c:
+//
+//   extern int Version;
+//   if (Version == 1) { ... } else if (Version == 2) { ... }
+//
+// 여기서는 Go 쪽과 동일하게 V2 시퀀스를 사용하므로 기본값을 2로 고정한다.
+int Version = 2;
+
 /******************************************************************************
 function:	Write GPIO
 parameter:
