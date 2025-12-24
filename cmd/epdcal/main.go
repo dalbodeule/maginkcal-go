@@ -95,29 +95,21 @@ func main() {
 		cancel()
 	}()
 
-	// Initialize EPD SPI driver (unless render-only). This will only be
-	// active on linux/arm builds where the epd SPI backend is available.
-	var epdDrv *epd.Driver
+	// Initialize EPD driver (C-based, via cgo) unless render-only.
+	// NOTE: This requires CGO_ENABLED=1 and the C driver (DEV_Config.c,
+	// EPD_12in48b.c) to be built/linked via internal/epd/epd_cgo.go.
+	var epdDrv *epd.CDriver
 	if !flags.renderOnly {
-		d, err := epd.Init(ctx)
+		d, err := epd.InitC()
 		if err != nil {
-			appLog.Error("failed to initialize EPD driver; continuing in render-only mode", err)
+			appLog.Error("failed to initialize C-based EPD driver; continuing in render-only mode", err)
 		} else {
-			if err := d.InitPanel(); err != nil {
-				appLog.Error("failed to init EPD panel; continuing in render-only mode", err)
-			} else {
-				appLog.Info("epd driver initialized")
-				epdDrv = d
-			}
+			appLog.Info("C-based epd driver initialized")
+			epdDrv = d
 		}
 		defer func() {
 			if epdDrv != nil {
-				if err := epdDrv.Sleep(); err != nil {
-					appLog.Error("epd sleep failed", err)
-				}
-				if err := epdDrv.Close(); err != nil {
-					appLog.Error("epd close failed", err)
-				}
+				epdDrv.Sleep()
 			}
 		}()
 	}

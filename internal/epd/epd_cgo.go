@@ -1,5 +1,3 @@
-//go:build cgo && linux
-
 // cgo-backed EPD driver wrapper.
 //
 // This 파일은 Waveshare C 드라이버(DEV_Config.c + EPD_12in48B_* 등)를
