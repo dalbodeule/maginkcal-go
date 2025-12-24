@@ -64,7 +64,7 @@ build-pi64:
 #   - Pi에 webui.zip 과 internal/epd/c 소스 복사 후:
 #       make -C internal/epd/c libepddrv.a   (또는 아래 타깃이 자동 실행)
 #
-build-pi-cgo: internal/epd/c/libepddrv.a
+build-pi-cgo: clib
 	@if [ -f webui.zip ]; then \
 		echo "==> Unpacking webui.zip into internal/web/static"; \
 		rm -rf internal/web/static; \
@@ -76,7 +76,7 @@ build-pi-cgo: internal/epd/c/libepddrv.a
 	GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=1 $(GO) build -o $(BINARY) $(PKG)
 
 # C EPD 드라이버 정적 라이브러리 빌드 (internal/epd/c/Makefile 에 위임)
-internal/epd/c/libepddrv.a:
+clib:
 	$(MAKE) -C internal/epd/c libepddrv.a
 
 test:
