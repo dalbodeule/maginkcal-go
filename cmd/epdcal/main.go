@@ -311,7 +311,7 @@ func runRefreshCycle(parentCtx context.Context, conf *config.Config, debug bool)
 //
 // In debug mode it writes to ./cache/preview.png, otherwise to
 // /var/lib/epdcal/preview.png.
-func runCapturePipeline(parentCtx context.Context, conf *config.Config, flags flagConfig, drv *epd.Driver) error {
+func runCapturePipeline(parentCtx context.Context, conf *config.Config, flags flagConfig, drv *epd.CDriver) error {
 	// Derive a short-lived context for the capture operation.
 	ctx, cancel := context.WithTimeout(parentCtx, 60*time.Second)
 	defer cancel()
