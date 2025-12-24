@@ -169,46 +169,50 @@ const (
 // classifyPixel decides whether a pixel should be black, red, or white on the
 // tri-color panel.
 //
-// 기준(조정 버전):
+// Python maginkcal 코드와의 대응:
 //
-//   - 밝기 Y = 0.299R + 0.587G + 0.114B
-//   - redness = R - max(G, B)
-//   - 충분히 "빨간" 픽셀 → red
-//   - 나머지에서 "회색 포함 어두운 계열" → black
-//   - 그 외 → white
+//   - 원래 스크립트는 캡쳐된 RGB 이미지를 그대로 두고
+//     - "is red" (R > G and R > B) 이면:
+//         * red 이미지에서는 유지
+//         * black 이미지에서는 white 로 제거
+//     - 그 외 픽셀은:
+//         * red 이미지에서 white 로 제거
+//         * black 이미지에서는 유지 (회색 포함)
 //
-// 기존 로직(Y < 64)에서는 다크 그레이/중간 그레이가 white로 빠져서
-// 패널에서 거의 보이지 않았다. e-paper는 실제로는 흰/검/빨간 3색만
-// 있기 때문에, 회색 영역을 살리려면 "조금만 어두워도 black으로" 보는
-// 쪽이 낫다.
+// tri-color 패널에서는 실제로 흰/검/빨 뿐이지만, 이 방식 덕분에
+// 회색/그레이 영역은 전부 "검정 plane"에 남으면서 시각적으로
+// 그레이톤처럼 보인다. 아래 로직은 이를 1bpp 방식으로 근사한다.
 func classifyPixel(c color.NRGBA) inkColor {
 	r, g, b := float64(c.R), float64(c.G), float64(c.B)
 
 	// Luma (perceptual brightness).
 	y := 0.299*r + 0.587*g + 0.114*b
 
-	// Red dominance.
+	// Red dominance (Python: R > G and R > B).
 	maxGB := g
 	if b > maxGB {
 		maxGB = b
 	}
 	redness := r - maxGB
 
-	// 1) 먼저 "충분히 빨간" 픽셀을 red로 보낸다.
-	//    - 밝기도 어느 정도 있고 (y >= 80)
-	//    - R 이 강하고 (r > 150)
-	//    - G/B 대비로도 빨강이 우세한 경우(redness > 32)
-	if y >= 80 && r > 150 && redness > 32 {
+	isRed := r > g && r > b && redness > 8
+
+	// 1) 먼저 "충분히 빨간" 픽셀은 red plane으로만 보낸다.
+	//    - Python 코드처럼 saturation 기준만 보고, 밝기는 크게 제한하지 않는다.
+	if isRed {
 		return inkRed
 	}
 
-	// 2) 그 외에 "약간만 어두워도" black으로 본다.
-	//    - 회색 영역도 black으로 보내서 e-paper에서 눈에 보이도록.
-	//    - 너무 밝은 영역(y >= 210 정도)는 white 로 남긴다.
-	if y < 210 {
+	// 2) 나머지는 "거의 완전한 흰색"만 white, 조금이라도 어두우면 black.
+	//
+	//    - Python 스크립트에서 red가 아닌 픽셀은 black 이미지에 그대로 남는다.
+	//    - e-paper 상에서 글자/회색 영역이 최대한 살아나도록,
+	//      밝기 Y가 충분히 높은 일부만 white 로 남기고
+	//      그 외는 모두 black 처리한다.
+	if y < 245 {
 		return inkBlack
 	}
 
-	// 3) 나머지는 white.
+	// 3) 아주 밝은 픽셀만 white.
 	return inkWhite
 }
