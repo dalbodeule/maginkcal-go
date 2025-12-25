@@ -4,7 +4,7 @@
 
 ---
 
-## 0. 현재 상태 요약 (2025-12-18 기준)
+## 0. 현재 상태 요약 (2025-12-25 기준)
 
 ### 0.1 이미 구현/연결된 부분 (DONE)
 
@@ -234,8 +234,44 @@
   - progress.md:
     - 테스트 진행상황, 실제 하드웨어 동작 확인 결과 등을 향후 업데이트
 
----
+### 0.3 2025-12-25 업데이트 – EPD 드라이버/렌더링/빌드 파이프라인
 
+- **EPD 드라이버 경로 정리**
+  - periph.io 기반 순수 Go 드라이버 [`internal/epd/epd_spi.go`](internal/epd/epd_spi.go:1)를 유지하면서,
+  - Waveshare C SDK(`EPD_12in48b.c`, `DEV_Config.c`)를 [`internal/epd/c`](internal/epd/c/DEV_Config.c:1) 아래에 포함하고 정적 라이브러리로 빌드한 뒤,
+  - cgo 래퍼 [`internal/epd/epd_cgo.go`](internal/epd/epd_cgo.go:1)를 통해 **C 기반 드라이버(`CDriver`)를 Go에서 직접 호출**할 수 있도록 구현.
+  - C 드라이버는 `lgpio` 기반 software SPI를 사용하며, 공식 C 예제와 동일한 코드 경로를 타기 때문에
+    - Debian trixie + Raspberry Pi Zero 2W + 12.48" B 패널 환경에서 **4분할 패널 전체가 안정적으로 갱신되는 것**을 실제 하드웨어로 확인.
+
+- **EPD 패널 버전 고정**
+  - C 쪽 `EPD_12in48b.c`가 사용하는 `extern int Version` 심볼을 [`DEV_Config.c`](internal/epd/c/DEV_Config.c:1)에서 `int Version = 2;` 로 정의하여
+    - Python 예제 `epd12in48b_V2.py`와 동일한 V2 초기화/구동 시퀀스를 사용하도록 고정.
+
+- **PNG → packed plane 변환/톤 매핑 개선**
+  - [`internal/convert/pack.go`](internal/convert/pack.go:1)에서:
+    - 패널 해상도/stride(1304x984, 163 bytes/row)에 맞춘 인덱싱을 재점검.
+    - 회전/중앙 crop 로직을 보완하여 캡처한 `/calendar` PNG가 패널 전체에 정확히 매핑되도록 정리.
+    - 픽셀 분류 로직을 Python 레퍼런스와 유사하게 조정:
+      - 강한 red 톤만 red plane(0)으로 보내고,
+      - 그 외 어두운/회색 계열은 black plane(0),
+      - 배경에 가까운 밝은 톤만 white로 유지하도록 하여,
+      - 실제 패널에서 **회색 영역/텍스트 가독성이 눈에 띄게 개선됨**을 확인.
+
+- **Web UI 타이포그래피/레이아웃 튜닝**
+  - [`webui/src/app/calendar/page.tsx`](webui/src/app/calendar/page.tsx:1)에서:
+    - 날짜/이벤트/헤더/배터리 영역의 폰트 크기 및 굵기를 상향 조정.
+    - 너무 연한 회색 텍스트는 사용하지 않도록 톤을 조정하여,
+      - e‑paper에서의 대비가 충분히 확보되도록 스타일 수정.
+
+- **빌드/배포 파이프라인 개선 (`webui.zip`)**
+  - 리소스가 부족한 Pi Zero 2W에서 Next.js 빌드가 부담이 큰 문제를 피하기 위해:
+    - 개발 머신에서 `webui`를 빌드/`next export` 한 후,
+    - 결과물(`internal/web/static`)을 `webui.zip` 단일 아카이브로 압축해 Pi로 전달,
+    - Pi 측 `Makefile` 타깃(`build-pi` 등)에서 `webui.zip`을 풀어 `internal/web/static`을 복원한 뒤 Go 바이너리를 빌드하는 플로우를 도입.
+  - 이를 통해 라즈베리 파이에서는 Go 빌드만 수행하면 되고, Web UI 빌드는 개발 머신에서 처리하도록 분리.
+
+---
+ 
 ## 1. 프로젝트 개요
 
 - 단일 Go 애플리케이션 `epdcal` (Raspbian/ARM 대상)
@@ -257,7 +293,9 @@
 
 - 대상 패널: Waveshare 12.48" tri-color e-paper (B), 해상도 1304x984
 - (설계 스펙) C 코드(`EPD_12in48B.c/.h`)를 레퍼런스로 삼아 Go 기반 드라이버 구현
-  - 실제 구현은 periph.io 기반 SPI 드라이버 (`internal/epd/epd_spi.go`) 로 포팅
+  - 초기에는 periph.io 기반 SPI 드라이버 [`internal/epd/epd_spi.go`](internal/epd/epd_spi.go:1) 로 포팅했고,
+  - 이후 Waveshare C SDK를 [`internal/epd/c`](internal/epd/c/DEV_Config.c:1) 아래에 포함해 정적 라이브러리로 빌드하고,
+    cgo 래퍼 [`internal/epd/epd_cgo.go`](internal/epd/epd_cgo.go:1)를 통해 C 기반 드라이버를 사용하는 경로를 추가
 - 버퍼 사양:
   - width = 1304, height = 984
   - stride = 163 bytes/row (1304 / 8)
@@ -383,7 +421,7 @@
 
 ### 2.7 디스플레이 파이프라인
 
-- periph.io 기반 SPI 드라이버로 Waveshare 패널 구동:
+- periph.io 기반 SPI 드라이버 또는 cgo로 래핑한 C 드라이버로 Waveshare 패널 구동:
   - Init/Reset → LUT 설정 → Display → Sleep
 - Go `internal/epd` 패키지에서 고수준 API 제공:
   - InitPanel / Clear / Display / Sleep
@@ -420,6 +458,8 @@ internal/ics/expand.go
 internal/model/model.go
 internal/convert/pack.go
 internal/epd/epd_spi.go
+internal/epd/epd_cgo.go
+internal/epd/c/...
 internal/capture/chromium.go
 internal/battery/battery.go
 waveshare/...                     # (초기 개발 시 참고용 C SDK, 빌드에는 미사용 가능)
@@ -548,13 +588,16 @@ webui/...                         # Next.js Web UI 소스
 - [x] headless Chromium(chromedp) 기반 PNG 캡처 (`internal/capture/chromium.go`)
 - [x] 주기 스케줄을 cron string(`config.refresh`) 기반으로 변경 (`robfig/cron/v3`)
 - [x] PNG → black/red packed plane 변환(`internal/convert/pack.go`)
-- [x] Waveshare C 드라이버를 참고하여 periph.io 기반 SPI 구현(`internal/epd/epd_spi.go`)
+- [x] Waveshare C 드라이버를 참고하여 periph.io 기반 SPI 구현(`internal/epd/epd_spi.go`) 및 C SDK 정적 라이브러리 + cgo 래퍼 추가(`internal/epd/c/*`, `internal/epd/epd_cgo.go`)
 - [x] display 파이프라인 통합 (cron/once → `/calendar` 캡처 → PNG → pack → EPD Display)
 - [x] Preview 이미지 HTTP 서빙 (`GET /preview.png`)
 - [x] 배터리 mock + I2C 리더 및 `/api/battery` 연동 (`internal/battery/battery.go`)
 - [x] 설치용 Makefile 타깃 (`install`, `systemd-install`)
 - [x] systemd 서비스 유닛 (`systemd/epdcal.service`) 작성
 - [x] README 에 설치/구동/known limitations / troubleshooting 정리
+- [x] 실제 12.48" B 패널에서 C 기반 드라이버 경로(software SPI + lgpio)가 4분할 전체를 안정적으로 갱신하는 것 확인
+- [x] `/calendar` 렌더링용 타이포그래피/레이아웃 조정으로 패널에서의 가독성 개선 (`webui/src/app/calendar/page.tsx`)
+- [x] `webui`를 개발 머신에서 빌드 후 `webui.zip`으로 전달하고, Pi에서 압축 해제 후 Go 바이너리만 빌드하는 cross-build 플로우 정리
 
 ### 11.2 TODO (우선순위)
 
@@ -567,6 +610,7 @@ webui/...                         # Next.js Web UI 소스
 - [ ] 런타임 캐시 고도화:
   - [ ] 마지막 성공 렌더링된 packed plane/PNG 저장
   - [ ] 새 렌더/EPD 전송 실패 시 fallback 메커니즘
+- [ ] Go 순수 드라이버(`epd_spi.go`)와 C 기반 드라이버(`epd_cgo.go`)의 선택 전략/인터페이스 정리 (build tag 또는 config 기반 선택 등)
 - [ ] 로그/문서 보완:
   - [ ] ICS Recurrence/TZ 예제와 실제 화면 캡처를 README/progress에 추가
 

@@ -87,10 +87,11 @@ Go 에서는 cgo 를 이용해 위 함수들을 thin wrapper 로 감싸 `interna
 - Go: 1.21 이상 권장
 - C Toolchain:
   - `gcc`, `make`, etc.
-- Waveshare 12.48" (B) C 드라이버:
-  - 레포지토리 내 `waveshare/` 디렉터리에 vendored
-- (선택) Headless 브라우저 사용 시:
-  - Chromium + chromedp (추가 기능으로 사용할 경우)
+- Waveshare 12.48" (B) C 드라이버 및 GPIO 라이브러리:
+  - 레포지토리 내 `internal/epd/c` 디렉터리에 포함된 C 소스를 정적 라이브러리로 빌드 (`make -C internal/epd/c`)
+  - Debian 계열에서는 `liblgpio-dev` 패키지 필요
+- Headless 브라우저:
+  - Chromium + chromedp (메인 캡처 파이프라인에서 사용)
 
 빌드/런 시 Google API, Python, PIL, token.pickle 등은 필요하지 않다.
 
@@ -103,13 +104,13 @@ Go 에서는 cgo 를 이용해 위 함수들을 thin wrapper 로 감싸 `interna
 ```text
 cmd/epdcal/main.go      # 메인 엔트리 포인트
 internal/config/        # 설정 로딩/검증
-internal/web/           # HTTP/Web UI 서버
+internal/web/           # HTTP/Web UI 서버 + 정적 파일 서빙
 internal/ics/           # ICS fetch/parse/expand
 internal/model/         # 공용 모델 (Occurrence 등)
-internal/render/        # image.NRGBA 렌더링
-internal/convert/       # NRGBA → packed plane 변환
-internal/epd/           # cgo 기반 EPD 드라이버 래퍼
-waveshare/              # vendored Waveshare C 드라이버
+internal/capture/       # headless Chromium 캡처 헬퍼
+internal/convert/       # PNG(image.NRGBA) → packed plane 변환
+internal/epd/           # cgo 기반 EPD 드라이버 래퍼 및 C 소스(internal/epd/c)
+webui/                  # Next.js Web UI 소스
 systemd/epdcal.service  # systemd 유닛 파일
 progress.md             # 진행/설계 문서
 README.md               # 이 문서
@@ -117,7 +118,18 @@ README.md               # 이 문서
 
 ### 4.2 빌드
 
-Raspberry Pi 상에서:
+#### 4.2.1 C 드라이버 정적 라이브러리 빌드
+
+`internal/epd/epd_cgo.go` 는 `internal/epd/c` 에서 빌드한 정적 라이브러리(`libepddrv.a`)를 링크한다.
+최초 한 번, 또는 C 소스를 변경한 뒤에는 다음을 실행한다:
+
+```bash
+cd /path/to/maginkcal-go/internal/epd/c
+make
+cd -    # 원래 디렉터리로 복귀
+```
+
+#### 4.2.2 Raspberry Pi 상에서 Go 바이너리 빌드
 
 ```bash
 cd /path/to/maginkcal-go
@@ -127,6 +139,21 @@ go build -o epdcal ./cmd/epdcal
 빌드 결과:
 
 - `./epdcal` 실행 파일 생성
+
+#### 4.2.3 Web UI 빌드 / cross-build 참고
+
+리소스가 제한적인 Raspberry Pi Zero 2W 등에서는 Next.js Web UI 빌드를
+개발 머신에서 수행한 뒤, 정적 파일만 Pi 로 가져오는 플로우를 사용할 수 있다:
+
+- 개발 머신에서:
+  - `webui` 디렉터리에서 Next.js 빌드 및 export 를 수행하고,
+  - 결과물을 `internal/web/static` 으로 복사한 뒤,
+  - 이를 `webui.zip` 으로 압축해 Pi 로 전송.
+- Raspberry Pi 에서는:
+  - `webui.zip` 을 풀어 `internal/web/static` 을 복원한 뒤,
+  - 위 4.2.1/4.2.2 단계에 따라 C 라이브러리 및 Go 바이너리를 빌드.
+
+자세한 빌드/배포 플로우는 `[`progress.md`](progress.md:1)` 의 최신 업데이트를 참고할 수 있다.
 
 ### 4.3 설치 (예시)
 
