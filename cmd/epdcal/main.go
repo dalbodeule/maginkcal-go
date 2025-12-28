@@ -333,7 +333,7 @@ func runCapturePipeline(parentCtx context.Context, conf *config.Config, flags fl
 		OutputPath: outPath,
 		Width:      0, // use defaults
 		Height:     0,
-		Timeout:    120 * time.Second,
+		Timeout:    180 * time.Second,
 	}
 	// If HTTP Basic Auth is configured, pass credentials through to the
 	// headless capture helper so that it can authenticate against the
