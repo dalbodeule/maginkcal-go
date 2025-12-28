@@ -94,6 +94,8 @@ export default function CalendarPage() {
           setError(
             e?.message ?? "데이터를 불러오는 중 오류가 발생했습니다.",
           );
+          // 오류가 있어도 화면은 렌더링되도록 eventsLoaded 를 true 로 설정
+          setEventsLoaded(true);
         }
       }
     }
@@ -117,16 +119,21 @@ export default function CalendarPage() {
         }
         const data: { percent?: number } = await res.json();
         if (cancelled) return;
-
+ 
         if (typeof data.percent === "number") {
           let p = data.percent;
           if (p < 0) p = 0;
           if (p > 100) p = 100;
           setBatteryPercent(p);
+        }
+        // 퍼센트가 없더라도 캡처 진행에는 지장이 없으므로 loaded 로 처리
+        setBatteryLoaded(true);
+      } catch {
+        // 배터리 정보는 필수는 아니므로 에러는 UI에 드러내지 않고 무시하되,
+        // 캡처가 data-ready 를 기다리며 멈추지 않도록 loaded 로 표시한다.
+        if (!cancelled) {
           setBatteryLoaded(true);
         }
-      } catch {
-        // 배터리 정보는 필수는 아니므로 에러는 UI에 드러내지 않고 무시
       }
     }
 
@@ -144,8 +151,10 @@ export default function CalendarPage() {
 
   const weekdayLabels =
     weekStart === "monday" ? WEEKDAYS_MON_FIRST : WEEKDAYS_SUN_FIRST;
-
-  const ready = eventsLoaded && batteryLoaded;
+ 
+  // 캡처 파이프라인은 일정 데이터 렌더링만 확인하면 되므로,
+  // 배터리 로딩 여부와 무관하게 eventsLoaded 기준으로 ready 를 판단한다.
+  const ready = eventsLoaded;
 
   return (
     <div

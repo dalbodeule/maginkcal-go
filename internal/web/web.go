@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"epdcal/internal/battery"
@@ -24,6 +25,16 @@ type Server struct {
 	cfg   *config.Config
 	debug bool
 	mux   *http.ServeMux
+
+	// In-memory cache for /api/events responses to avoid redundant
+	// fetch/parse/expand work on every HTTP request.
+	eventsMu    sync.RWMutex
+	eventsCache *eventsCache
+
+	// In-memory cache for battery status. This avoids hitting I2C (or
+	// even the mock) on every single HTTP call.
+	batteryMu    sync.RWMutex
+	batteryCache *batteryCache
 }
 
 // embeddedStatic contains the exported Next.js static build.
@@ -132,11 +143,27 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 
 // handleBattery exposes current battery status (percent, voltage) for the Web UI.
 //
-// For now this endpoint uses battery.DefaultReader(), which is backed by a
-// mock implementation returning a random percentage. Later, DefaultReader
-// can be wired to a PiSugar3 I2C-based Reader on Raspberry Pi.
+// This endpoint uses a small in-memory cache to avoid hitting I2C (or even
+// the mock reader) on every single HTTP request. Battery status does not
+// need sub-second precision, so a short TTL is sufficient.
 func (s *Server) handleBattery(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+
+	const batteryCacheTTL = 30 * time.Second
+	now := time.Now()
+
+	// Fast path: return cached value if it's still fresh.
+	s.batteryMu.RLock()
+	bc := s.batteryCache
+	s.batteryMu.RUnlock()
+	if bc != nil && now.Sub(bc.updatedAt) < batteryCacheTTL {
+		resp := batteryResponse{
+			Percent:   bc.status.Percent,
+			VoltageMv: bc.status.VoltageMv,
+		}
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
 
 	br := battery.DefaultReader()
 	if br == nil {
@@ -151,10 +178,13 @@ func (s *Server) handleBattery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type batteryResponse struct {
-		Percent   int `json:"percent"`
-		VoltageMv int `json:"voltage_mv"`
+	// Update cache.
+	s.batteryMu.Lock()
+	s.batteryCache = &batteryCache{
+		status:    status,
+		updatedAt: time.Now(),
 	}
+	s.batteryMu.Unlock()
 
 	resp := batteryResponse{
 		Percent:   status.Percent,
@@ -223,6 +253,24 @@ type eventsResponse struct {
 	WeekStart       string          `json:"week_start"`
 }
 
+// eventsCache holds a cached /api/events response and its timestamp.
+type eventsCache struct {
+	resp      eventsResponse
+	updatedAt time.Time
+}
+
+// batteryCache holds the last known battery status and its timestamp.
+type batteryCache struct {
+	status    battery.Status
+	updatedAt time.Time
+}
+
+// batteryResponse is the JSON response shape for /api/battery.
+type batteryResponse struct {
+	Percent   int `json:"percent"`
+	VoltageMv int `json:"voltage_mv"`
+}
+
 // occurrenceDTO is a JSON-friendly view of occurrences.
 type occurrenceDTO struct {
 	SourceID    string    `json:"source_id"`
@@ -260,6 +308,21 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	// Display timezone.
 	loc := resolveLocationOrLocal(s.cfg.Timezone)
+
+	// Small in-memory cache for expanded events. This avoids repeating
+	// ICS fetch/parse/expand work on every HTTP request. The cache is
+	// primarily a performance optimization for Web UI access; the main
+	// refresh loop is still driven by cron in cmd/epdcal.
+	const eventsCacheTTL = 30 * time.Second
+	cacheNow := time.Now()
+
+	s.eventsMu.RLock()
+	ec := s.eventsCache
+	s.eventsMu.RUnlock()
+	if ec != nil && cacheNow.Sub(ec.updatedAt) < eventsCacheTTL {
+		writeJSON(w, http.StatusOK, ec.resp)
+		return
+	}
 
 	now := time.Now().In(loc)
 	rangeStart := now.AddDate(0, 0, -backfill)
@@ -370,6 +433,14 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		DisplayTimeZone: loc.String(),
 		WeekStart:       s.cfg.WeekStart,
 	}
+
+	// Update in-memory cache for subsequent requests.
+	s.eventsMu.Lock()
+	s.eventsCache = &eventsCache{
+		resp:      resp,
+		updatedAt: time.Now(),
+	}
+	s.eventsMu.Unlock()
 
 	writeJSON(w, http.StatusOK, resp)
 }
