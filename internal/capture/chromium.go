@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"time"
 
@@ -35,6 +36,13 @@ type CaptureOptions struct {
 	// Timeout bounds the entire capture operation. If zero, a sane default
 	// (DefaultTimeoutSec) is used.
 	Timeout time.Duration
+
+	// BasicAuthUsername and BasicAuthPassword, if both non-empty, are used
+	// to perform HTTP Basic Authentication by embedding userinfo into the
+	// capture URL. This allows the headless browser to pass through the
+	// same BasicAuth protection as normal clients.
+	BasicAuthUsername string
+	BasicAuthPassword string
 }
 
 // CaptureCalendarPNG launches (or attaches to) a headless Chromium instance
@@ -87,9 +95,23 @@ func CaptureCalendarPNG(parentCtx context.Context, opts CaptureOptions) error {
 	defer timeoutCancel()
 
 	var png []byte
+
+	// If BasicAuth credentials are provided, embed them into the URL as userinfo
+	// so that headless Chromium can authenticate against the BasicAuth-protected
+	// server (e.g., http://user:pass@127.0.0.1:8080/calendar).
+	targetURL := opts.URL
+	if opts.BasicAuthUsername != "" && opts.BasicAuthPassword != "" {
+		u, err := url.Parse(opts.URL)
+		if err != nil {
+			return fmt.Errorf("capture: invalid URL %q: %w", opts.URL, err)
+		}
+		u.User = url.UserPassword(opts.BasicAuthUsername, opts.BasicAuthPassword)
+		targetURL = u.String()
+	}
+
 	tasks := chromedp.Tasks{
 		chromedp.EmulateViewport(int64(opts.Width), int64(opts.Height)),
-		chromedp.Navigate(opts.URL),
+		chromedp.Navigate(targetURL),
 		// Wait until /calendar signals that it has finished loading data
 		// and rendering via data-ready="true".
 		chromedp.WaitVisible(`[data-ready="true"]`, chromedp.ByQuery),

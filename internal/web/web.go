@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -46,7 +47,54 @@ func NewServer(cfg *config.Config, debug bool) *Server {
 
 // Handler returns the underlying http.Handler for this server.
 func (s *Server) Handler() http.Handler {
-	return s.mux
+	h := http.Handler(s.mux)
+	if s.basicAuthEnabled() {
+		appLog.Info("HTTP basic auth enabled", "listen", "http://"+s.cfg.Listen)
+		return s.basicAuthMiddleware(h)
+	}
+	return h
+}
+
+// basicAuthEnabled reports whether HTTP Basic Auth is configured.
+func (s *Server) basicAuthEnabled() bool {
+	if s.cfg == nil || s.cfg.BasicAuth == nil {
+		return false
+	}
+	// 빈 사용자명 또는 비밀번호가 설정된 경우에는 비활성화로 취급한다.
+	if s.cfg.BasicAuth.Username == "" || s.cfg.BasicAuth.Password == "" {
+		return false
+	}
+	return true
+}
+
+// basicAuthMiddleware wraps all handlers except /health with HTTP Basic Auth.
+func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
+	username := s.cfg.BasicAuth.Username
+	password := s.cfg.BasicAuth.Password
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// /health 는 항상 무인증으로 노출한다.
+		if r.URL.Path == "/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		u, p, ok := r.BasicAuth()
+		if !ok || !secureCompare(u, username) || !secureCompare(p, password) {
+			w.Header().Set("WWW-Authenticate", `Basic realm="EPDCal", charset="UTF-8"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// secureCompare compares two strings in constant time.
+func secureCompare(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
 // StartServer starts an HTTP server bound to cfg.Listen and serves

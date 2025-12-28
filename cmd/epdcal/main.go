@@ -335,6 +335,16 @@ func runCapturePipeline(parentCtx context.Context, conf *config.Config, flags fl
 		Height:     0,
 		Timeout:    120 * time.Second,
 	}
+	// If HTTP Basic Auth is configured, pass credentials through to the
+	// headless capture helper so that it can authenticate against the
+	// protected /calendar endpoint.
+	if conf.BasicAuth != nil &&
+		conf.BasicAuth.Username != "" &&
+		conf.BasicAuth.Password != "" {
+		opts.BasicAuthUsername = conf.BasicAuth.Username
+		opts.BasicAuthPassword = conf.BasicAuth.Password
+		appLog.Info("chromium capture using HTTP basic auth")
+	}
 
 	if err := capture.CaptureCalendarPNG(ctx, opts); err != nil {
 		return err
