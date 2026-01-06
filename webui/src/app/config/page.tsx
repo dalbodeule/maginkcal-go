@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import nanumGothic from "../fonts/nanum";
+import { I18nProvider, useI18n } from "@/app/core/i18n";
 
 type WeekStart = "monday" | "sunday";
 
@@ -28,7 +29,9 @@ interface AppConfig {
   basic_auth?: BasicAuthConfig;
 }
 
-export default function ConfigPage() {
+function ConfigContent() {
+  const { t } = useI18n();
+
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -73,22 +76,19 @@ export default function ConfigPage() {
       } catch (e: any) {
         if (!cancelled) {
           // /api/config 가 아직 구현되지 않았거나, 404/500 이면 여기로 들어온다.
-          setError(
-            e?.message ??
-              "설정을 불러오는 중 오류가 발생했습니다. 백엔드 /api/config 구현 상태를 확인하세요.",
-          );
+          setError(e?.message ?? t("config.load_error"));
         }
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
 
-    load();
+    void load();
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [t]);
 
   const handleSave = async () => {
     if (!config) return;
@@ -106,12 +106,9 @@ export default function ConfigPage() {
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
-      setSaveMessage("설정이 저장되었습니다.");
+      setSaveMessage(t("config.save_ok"));
     } catch (e: any) {
-      setError(
-        e?.message ??
-          "설정을 저장하는 동안 오류가 발생했습니다. 백엔드 /api/config 구현 상태를 확인하세요.",
-      );
+      setError(e?.message ?? t("config.save_error"));
     } finally {
       setSaving(false);
     }
@@ -136,7 +133,11 @@ export default function ConfigPage() {
     setConfig({ ...config, ics: nextList });
   };
 
-  const handleUpdateICS = (index: number, field: keyof ICSConfigItem, value: string) => {
+  const handleUpdateICS = (
+    index: number,
+    field: keyof ICSConfigItem,
+    value: string,
+  ) => {
     if (!config) return;
     const nextList = config.ics.map((item, i) =>
       i === index ? { ...item, [field]: value } : item,
@@ -173,7 +174,10 @@ export default function ConfigPage() {
     setConfig({ ...config, basic_auth: nextAuth });
   };
 
-  const handleBasicAuthField = (field: keyof BasicAuthConfig, value: string) => {
+  const handleBasicAuthField = (
+    field: keyof BasicAuthConfig,
+    value: string,
+  ) => {
     if (!config) return;
     const nextAuth: BasicAuthConfig = {
       enabled: config.basic_auth?.enabled ?? false,
@@ -197,27 +201,26 @@ export default function ConfigPage() {
         <header className="mb-4 border-b border-slate-200 pb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
-              epdcal 설정
+              {t("config.title")}
             </h1>
             <p className="mt-1 text-xs sm:text-sm text-slate-500">
-              ICS 구독 / 타임존 / 스케줄 / 표시 옵션을 설정하고, 우측에서 현재
-              Preview 이미지를 확인할 수 있습니다.
+              {t("config.subtitle")}
             </p>
           </div>
           <div className="flex items-center gap-2 text-xs sm:text-sm">
-            <span className="text-slate-500">페이지</span>
+            <span className="text-slate-500">{t("config.nav.label")}</span>
             <div className="inline-flex rounded-full border border-slate-300 bg-slate-100 p-0.5">
               <a
                 href="/calendar"
                 className="px-3 py-1 rounded-full text-slate-700 hover:bg-slate-200"
               >
-                캘린더 보기
+                {t("common.goto.calendar")}
               </a>
               <a
                 href="/config"
                 className="px-3 py-1 rounded-full bg-slate-900 text-white"
               >
-                설정 / Preview
+                {t("common.goto.config")}
               </a>
             </div>
           </div>
@@ -225,7 +228,7 @@ export default function ConfigPage() {
 
         {loading && (
           <div className="mb-3 rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600">
-            설정을 불러오는 중입니다...
+            {t("config.loading")}
           </div>
         )}
 
@@ -245,24 +248,23 @@ export default function ConfigPage() {
           {/* Left: Config form */}
           <div className="space-y-4">
             <h2 className="text-sm sm:text-base font-semibold text-slate-800">
-              설정
+              {t("config.section.settings")}
             </h2>
 
             {!config ? (
               <p className="text-xs text-slate-500">
-                설정 정보가 아직 없습니다. 백엔드 /api/config 구현 후 이 화면에서
-                수정할 수 있습니다.
+                {t("config.empty_config")}
               </p>
             ) : (
               <>
                 {/* General */}
                 <div className="rounded-lg border border-slate-200 p-3 space-y-3">
                   <h3 className="text-xs font-semibold text-slate-700">
-                    일반
+                    {t("config.section.general")}
                   </h3>
                   <div className="space-y-2">
                     <label className="block text-[11px] text-slate-600">
-                      타임존 (IANA 이름, 예: Asia/Seoul)
+                      {t("config.timezone.label")}
                       <input
                         type="text"
                         value={config.timezone}
@@ -273,7 +275,7 @@ export default function ConfigPage() {
                       />
                     </label>
                     <label className="block text-[11px] text-slate-600">
-                      Refresh 스케줄 (cron string, 예: */15 * * * *)
+                      {t("config.refresh.label")}
                       <input
                         type="text"
                         value={config.refresh}
@@ -285,7 +287,7 @@ export default function ConfigPage() {
                     </label>
                     <div className="flex items-center justify-between gap-2">
                       <label className="flex-1 text-[11px] text-slate-600">
-                        Horizon (앞으로 표시할 일 수)
+                        {t("config.horizon.label")}
                         <input
                           type="number"
                           min={1}
@@ -301,7 +303,7 @@ export default function ConfigPage() {
                         />
                       </label>
                       <label className="flex flex-col justify-end text-[11px] text-slate-600">
-                        주 시작 요일
+                        {t("config.week_start.label")}
                         <div className="mt-1 inline-flex rounded-full border border-slate-300 bg-slate-100 p-0.5">
                           <button
                             type="button"
@@ -312,7 +314,7 @@ export default function ConfigPage() {
                                 : "text-slate-700 hover:bg-slate-200"
                             }`}
                           >
-                            월요일
+                            {t("config.week_start.monday")}
                           </button>
                           <button
                             type="button"
@@ -323,7 +325,7 @@ export default function ConfigPage() {
                                 : "text-slate-700 hover:bg-slate-200"
                             }`}
                           >
-                            일요일
+                            {t("config.week_start.sunday")}
                           </button>
                         </div>
                       </label>
@@ -335,7 +337,7 @@ export default function ConfigPage() {
                         onChange={handleToggleAllDay}
                         className="h-3 w-3 rounded border-slate-300"
                       />
-                      All-day 섹션 표시
+                      {t("config.show_all_day")}
                     </label>
                   </div>
                 </div>
@@ -344,20 +346,19 @@ export default function ConfigPage() {
                 <div className="rounded-lg border border-slate-200 p-3 space-y-3">
                   <div className="flex items-center justify-between">
                     <h3 className="text-xs font-semibold text-slate-700">
-                      ICS 구독
+                      {t("config.ics.section_title")}
                     </h3>
                     <button
                       type="button"
                       onClick={handleAddICS}
                       className="rounded border border-slate-300 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-700 hover:bg-slate-100"
                     >
-                      + 추가
+                      {t("config.ics.add")}
                     </button>
                   </div>
                   {config.ics.length === 0 ? (
                     <p className="text-[11px] text-slate-500">
-                      아직 등록된 ICS URL 이 없습니다. "+ 추가" 버튼을 눌러
-                      캘린더를 등록하세요.
+                      {t("config.ics.empty")}
                     </p>
                   ) : (
                     <div className="space-y-2">
@@ -368,7 +369,7 @@ export default function ConfigPage() {
                         >
                           <div className="flex items-center gap-2">
                             <label className="flex-1 text-[11px] text-slate-600">
-                              ID
+                              {t("config.ics.id")}
                               <input
                                 type="text"
                                 value={item.id}
@@ -383,11 +384,11 @@ export default function ConfigPage() {
                               onClick={() => handleRemoveICS(idx)}
                               className="mt-4 rounded border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] text-red-700 hover:bg-red-100"
                             >
-                              삭제
+                              {t("config.ics.delete")}
                             </button>
                           </div>
                           <label className="block text-[11px] text-slate-600">
-                            URL
+                            {t("config.ics.url")}
                             <input
                               type="text"
                               value={item.url}
@@ -406,10 +407,10 @@ export default function ConfigPage() {
                 {/* Highlight keywords + Basic Auth */}
                 <div className="rounded-lg border border-slate-200 p-3 space-y-3">
                   <h3 className="text-xs font-semibold text-slate-700">
-                    표시 옵션 / 보안
+                    {t("config.highlight.section_title")}
                   </h3>
                   <label className="block text-[11px] text-slate-600">
-                    Red highlight keywords (쉼표 또는 줄바꿈으로 구분)
+                    {t("config.highlight.label")}
                     <textarea
                       rows={3}
                       value={config.highlight_red_keywords.join(", ")}
@@ -423,16 +424,17 @@ export default function ConfigPage() {
                       <input
                         type="checkbox"
                         checked={config.basic_auth?.enabled ?? false}
-                        onChange={(e) => handleBasicAuthEnabled(e.target.checked)}
+                        onChange={(e) =>
+                          handleBasicAuthEnabled(e.target.checked)
+                        }
                         className="h-3 w-3 rounded border-slate-300"
                       />
-                      Basic Auth 활성화 (백엔드에서 /health 를 제외한 모든
-                      엔드포인트 보호)
+                      {t("config.basic_auth.enable")}
                     </label>
                     {config.basic_auth?.enabled && (
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <label className="text-[11px] text-slate-600">
-                          Username
+                          {t("config.basic_auth.username")}
                           <input
                             type="text"
                             value={config.basic_auth.username}
@@ -443,7 +445,7 @@ export default function ConfigPage() {
                           />
                         </label>
                         <label className="text-[11px] text-slate-600">
-                          Password
+                          {t("config.basic_auth.password")}
                           <input
                             type="password"
                             value={config.basic_auth.password}
@@ -465,7 +467,7 @@ export default function ConfigPage() {
                     disabled={saving}
                     className="inline-flex items-center rounded bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
                   >
-                    {saving ? "저장 중..." : "설정 저장"}
+                    {saving ? t("config.saving") : t("config.save")}
                   </button>
                 </div>
               </>
@@ -476,27 +478,22 @@ export default function ConfigPage() {
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="text-sm sm:text-base font-semibold text-slate-800">
-                Preview (/preview.png)
+                {t("common.preview.title")}
               </h2>
               <button
                 type="button"
                 onClick={() => setPreviewReloadKey((k) => k + 1)}
                 className="rounded border border-slate-300 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-700 hover:bg-slate-100"
               >
-                Preview 새로고침
+                {t("config.preview.refresh")}
               </button>
             </div>
             <p className="text-[11px] text-slate-500">
-              최신 캡처 결과를 확인하려면 "Preview 새로고침" 버튼을 누르거나
-              브라우저 캐시를 무시하고 다시 불러오십시오. 이 이미지는 Go 서버의{" "}
-              <code className="rounded bg-slate-100 px-1 py-0.5 text-[10px]">
-                /preview.png
-              </code>{" "}
-              엔드포인트에서 제공됩니다.
+              {t("config.preview.hint")}
             </p>
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 flex items-center justify-center">
               <div className="bg-slate-900/90 text-white text-[10px] px-1.5 py-0.5 rounded absolute translate-y-[-120%] left-1/2 -translate-x-1/2 hidden lg:inline-flex">
-                1304 × 984 EPD 비율에 가깝게 표시됩니다.
+                {t("config.preview.aspect_hint")}
               </div>
               <div className="relative w-full aspect-[1304/984] max-h-[480px] bg-slate-900/5 flex items-center justify-center overflow-hidden">
                 <img
@@ -505,9 +502,7 @@ export default function ConfigPage() {
                   alt="EPD preview"
                   className="max-w-full max-h-full object-contain border border-slate-300 bg-white"
                   onError={() =>
-                    setError(
-                      "Preview 이미지를 불러오는 데 실패했습니다. Go 서버에서 /preview.png 가 제공되는지 확인하세요.",
-                    )
+                    setError(t("config.preview.error"))
                   }
                 />
               </div>
@@ -516,5 +511,13 @@ export default function ConfigPage() {
         </section>
       </main>
     </div>
+  );
+}
+
+export default function ConfigPage() {
+  return (
+    <I18nProvider>
+      <ConfigContent />
+    </I18nProvider>
   );
 }

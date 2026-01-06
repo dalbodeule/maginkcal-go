@@ -37,6 +37,13 @@ type Config struct {
 	// Timezone is the IANA timezone used as canonical display zone (e.g. "Asia/Seoul").
 	Timezone string `yaml:"timezone" json:"timezone"`
 
+	// DefaultLocale is the default UI/display locale used for `/calendar`
+	// rendering and capture. This is typically a short code such as:
+	//   - "ko" (Korean)
+	//   - "en" (English)
+	// It may also accept "ko-KR"/"en-US" and will be normalized accordingly.
+	DefaultLocale string `yaml:"default_locale" json:"default_locale"`
+
 	// WeekStart controls which weekday is treated as the first day of the week
 	// in calendar views. Supported values:
 	//   - "monday" (default)
@@ -74,11 +81,12 @@ type Config struct {
 // DefaultConfig returns an in-memory default configuration.
 func DefaultConfig() *Config {
 	return &Config{
-		Listen:      "127.0.0.1:8080",
-		Timezone:    "Asia/Seoul",
-		WeekStart:   "monday",
-		Rotation:    90,
-		RefreshCron: "*/15 * * * *",
+		Listen:        "127.0.0.1:8080",
+		Timezone:      "Asia/Seoul",
+		DefaultLocale: "ko",
+		WeekStart:     "monday",
+		Rotation:      90,
+		RefreshCron:   "*/15 * * * *",
 		// Keep a sensible default for legacy minutes as well, but the
 		// application should primarily use RefreshCron.
 		HorizonDays:  7,
@@ -98,6 +106,23 @@ func (c *Config) Normalize() {
 	if c.Timezone == "" {
 		c.Timezone = "Asia/Seoul"
 	}
+
+	// DefaultLocale normalization.
+	// We accept short codes ("ko", "en") and some common variants ("ko-KR", "en-US").
+	switch c.DefaultLocale {
+	case "ko", "ko-KR":
+		c.DefaultLocale = "ko"
+	case "en", "en-US":
+		c.DefaultLocale = "en"
+	case "":
+		// If not set, fall back to Korean for panel display, even though
+		// the Web UI's own internal default is English.
+		c.DefaultLocale = "ko"
+	default:
+		// Unknown value; be conservative and fall back to ko.
+		c.DefaultLocale = "ko"
+	}
+
 	// WeekStart default & validation.
 	switch c.WeekStart {
 	case "monday", "sunday":

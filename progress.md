@@ -427,6 +427,43 @@
   - InitPanel / Clear / Display / Sleep
   - `--render-only` 옵션으로 실제 하드웨어 출력 비활성화 가능(개발/테스트용)
 
+### 2.8 Web UI 다국어(i18n) 전략
+
+- 기본 원칙:
+  - 서버/클라이언트 모두 **기본 로케일은 `ko-KR`** 로 유지하되,
+  - Web UI 텍스트는 **하드코딩 대신 key 기반 번역 테이블**로 관리.
+- 지원 대상(초기):
+  - `ko`(한국어, 기본) / `en`(영어) 2개 로케일 우선 지원.
+- Web UI 레벨 전략:
+  - Next.js(App Router) 기준 **클라이언트 단 i18n** 부터 도입 (SSR/서버 측 포맷팅은 추후 필요 시 확장).
+  - 공통 translation 모듈(예: `webui/src/app/core/i18n/`) 아래에:
+    - `locales/ko.ts`, `locales/en.ts` 와 같은 **타입 안정적인 key-value 딕셔너리** 정의.
+    - `createI18n()` 유틸을 통해 `t("home.title")` 형태로 접근.
+  - 페이지 구조:
+    - `/` (홈), `/calendar`, `/config` 모두 동일한 키셋을 공유/부분 재사용.
+    - 번역 키 예:
+      - `home.title`, `home.description`, `calendar.header.today`, `config.section.general`, ...
+- 로케일 선택/보존:
+  - 초기에는 **브라우저 localStorage + 쿼리스트링/해시** 기반으로만 관리 (백엔드 의존 X):
+    - 첫 진입 시 `navigator.language` (`ko`, `en` 등) 를 보고 기본 로케일 추정,
+    - 사용자가 언어 스위처에서 선택 시 localStorage 에 저장.
+  - 이후 `/api/config` 가 안정화되면:
+    - `config.default_locale` 필드를 추가하고,
+    - Web UI 에서 서버 기본값과 사용자의 선택값을 병합하는 구조로 확장.
+- 시간/날짜 포맷:
+  - 현재는 `toLocaleDateString("ko-KR", ...)`, `"ko-KR"` 하드코딩.
+  - i18n 도입 시:
+    - 날짜/시간 포맷용 **헬퍼 함수**를 `i18n` 모듈 안으로 모으고,
+    - 로케일별로 `Intl.DateTimeFormat` 옵션을 정의:
+      - 예: `formatDate(date, locale)`, `formatTimeRange(start, end, locale)`.
+    - 캘린더 헤더의 `"오늘"`, 요일 라벨 등도 번역 키 기반으로 치환.
+- EPD 캡처 영향:
+  - 캡처 파이프라인은 `/calendar` 의 최종 렌더링 결과만 사용하므로,
+  - **다국어 적용 자체는 캡처 플로우에 추가적인 제약을 주지 않음**.
+  - 단, 향후 운영 시:
+    - EPD 표시는 고정 로케일(예: `ko`)로 두고,
+    - 브라우저 상 Web UI 용 언어 스위처만 노출하는 전략도 검토.
+
 ---
 
 ## 3. 비기능 요구사항
@@ -600,7 +637,6 @@ webui/...                         # Next.js Web UI 소스
 - [x] `webui`를 개발 머신에서 빌드 후 `webui.zip`으로 전달하고, Pi에서 압축 해제 후 Go 바이너리만 빌드하는 cross-build 플로우 정리
 
 ### 11.2 TODO (우선순위)
-
 - [-] ICS fetch/parse/expand unit test 및 fixture
   - [ ] `internal/ics/testdata/*.ics` 작성
   - [ ] `parse_test.go` / `expand_test.go` 에서 Recurrence/TZ/EXDATE/RECURRENCE-ID 검증
@@ -609,9 +645,16 @@ webui/...                         # Next.js Web UI 소스
 - [ ] Basic Auth 미들웨어 구현 및 `/health` 제외 전 엔드포인트 보호
 - [ ] 런타임 캐시 고도화:
   - [ ] 마지막 성공 렌더링된 packed plane/PNG 저장
-  - [ ] 새 렌더/EPD 전송 실패 시 fallback 메커니즘
+  - [ ] 새 려더/EPD 전송 실패 시 fallback 메커니즘
 - [ ] Go 순수 드라이버(`epd_spi.go`)와 C 기반 드라이버(`epd_cgo.go`)의 선택 전략/인터페이스 정리 (build tag 또는 config 기반 선택 등)
 - [ ] 로그/문서 보완:
   - [ ] ICS Recurrence/TZ 예제와 실제 화면 캡처를 README/progress에 추가
+- [ ] Web UI 다국어(i18n) 지원:
+  - [ ] i18n 설계 문서화 (`progress.md` 2.8 절, 이 항목)
+  - [ ] Web UI 공통 i18n 유틸/컨텍스트 구조 도입 (예: `core/i18n` 모듈, `t()` 헬퍼)
+  - [ ] `/`, `/calendar`, `/config` 페이지 텍스트를 번역 키 기반으로 치환
+  - [ ] `ko`/`en` 기본 로케일 번역 테이블 정의 및 언어 스위처 UI 구현
+  - [ ] (선택) `/api/config` 에 `default_locale` 추가 및 Web UI 와 연동
+
 
 이 문서는 구현 진행에 따라 지속적으로 업데이트되며, 특히 **ICS Recurrence/TZ 처리와 관련된 테스트 진행 상황 및 제한사항**을 중심으로 보완될 예정이다.
