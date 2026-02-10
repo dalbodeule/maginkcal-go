@@ -297,11 +297,14 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	// Parse query parameters.
 	q := r.URL.Query()
-	days := parseIntDefault(q.Get("days"), 7)
+	rawDays := q.Get("days")
+	rawBackfill := q.Get("backfill")
+
+	days := parseIntDefault(rawDays, 7)
 	if days <= 0 {
 		days = 7
 	}
-	backfill := parseIntDefault(q.Get("backfill"), 1)
+	backfill := parseIntDefault(rawBackfill, 1)
 	if backfill < 0 {
 		backfill = 0
 	}
@@ -325,8 +328,28 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().In(loc)
-	rangeStart := now.AddDate(0, 0, -backfill)
-	rangeEnd := now.AddDate(0, 0, days)
+
+	var rangeStart, rangeEnd time.Time
+	if rawDays == "" && rawBackfill == "" {
+		// 기본값: 이번 주 시작(week_start 설정에 따라 일/월)을 기준으로 35일 범위.
+		rangeStart = startOfWeek(now, loc, s.cfg.WeekStart)
+		rangeEnd = rangeStart.AddDate(0, 0, 35)
+
+		// 로깅 편의를 위해 days/backfill 를 재계산한 개념값으로 덮어쓴다.
+		// backfill 은 now 기준 과거 일 수, days 는 앞으로의 일 수로 본다.
+		backfill = int(now.Sub(rangeStart).Hours() / 24)
+		if backfill < 0 {
+			backfill = 0
+		}
+		days = int(rangeEnd.Sub(now).Hours() / 24)
+		if days <= 0 {
+			days = 1
+		}
+	} else {
+		// 사용자가 days/backfill 을 명시하면 기존 동작 유지: now 기준.
+		rangeStart = now.AddDate(0, 0, -backfill)
+		rangeEnd = now.AddDate(0, 0, days)
+	}
 
 	appLog.Info("api events request",
 		"days", days,
@@ -466,6 +489,29 @@ func resolveLocationOrLocal(name string) *time.Location {
 		return time.Local
 	}
 	return loc
+}
+
+// startOfWeek returns the start of the week (00:00 in loc) for the given time.
+// weekStart is a config string (e.g. "sunday" or "monday"). Any 값이 "sunday"
+// 가 아니면 모두 Monday 시작으로 간주한다.
+func startOfWeek(t time.Time, loc *time.Location, weekStart string) time.Time {
+	if loc == nil {
+		loc = time.Local
+	}
+
+	_tt := t.In(loc)
+	weekday := int(_tt.Weekday()) // Sunday=0, Monday=1, ...
+
+	startIndex := 1 // Monday
+	if strings.ToLower(weekStart) == "sunday" {
+		startIndex = 0
+	}
+
+	// 현재 요일에서 주 시작 요일까지 되돌아가는 일 수.
+	delta := (7 + weekday - startIndex) % 7
+
+	midnightToday := time.Date(_tt.Year(), _tt.Month(), _tt.Day(), 0, 0, 0, 0, loc)
+	return midnightToday.AddDate(0, 0, -delta)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

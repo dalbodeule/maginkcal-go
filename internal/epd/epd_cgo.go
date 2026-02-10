@@ -1,9 +1,18 @@
+//go:build linux && arm && cgo
+
 // cgo-backed EPD driver wrapper.
 //
-// This 파일은 Waveshare C 드라이버(DEV_Config.c + EPD_12in48B_* 등)를
-// Go 코드에서 직접 호출하기 위한 스켈레톤이다. 실제 C 구현은 이미
-// Zero 2 W + trixie 환경에서 정상 동작하는 것이 확인되었으므로,
-// 여기서는 그 C API를 cgo로 래핑하는 역할만 한다.
+// 이 파일은 linux/arm(cgo 활성화) 환경에서만 활성화된다. 즉,
+//   - GOOS=linux
+//   - GOARCH=arm (예: armv7)
+//   - CGO_ENABLED=1
+// 일 때만 실제 C 드라이버에 링크된다.
+//
+// 내용:
+//   - Waveshare C 드라이버(DEV_Config.c + EPD_12in48B_* 등)를 Go 코드에서
+//     직접 호출하기 위한 래퍼.
+//   - Zero 2 W + trixie 환경에서 C 구현이 정상 동작하는 것이 확인되었으며,
+//     여기서는 그 C API를 cgo로 감싸는 역할만 한다.
 //
 // 전제:
 //   - internal/epd/c/ 디렉터리 아래에 C 헤더/라이브러리가 존재한다.
@@ -27,8 +36,8 @@
 package epd
 
 /*
-#cgo linux CFLAGS: -I${SRCDIR}/c
-#cgo linux LDFLAGS: -L${SRCDIR}/c -lepddrv -llgpio
+#cgo linux,arm CFLAGS: -I${SRCDIR}/c
+#cgo linux,arm LDFLAGS: -L${SRCDIR}/c -lepddrv -llgpio
 
 #include <stdint.h>
 #include "EPD_12in48b.h"
