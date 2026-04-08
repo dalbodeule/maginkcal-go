@@ -115,6 +115,7 @@ func CaptureCalendarPNG(parentCtx context.Context, opts CaptureOptions) error {
 		// Wait until /calendar signals that it has finished loading data
 		// and rendering via data-ready="true".
 		chromedp.WaitVisible(`[data-ready="true"]`, chromedp.ByQuery),
+		chromedp.Sleep(500 * time.Millisecond),
 		chromedp.FullScreenshot(&png, 100),
 	}
 
