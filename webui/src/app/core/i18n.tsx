@@ -11,6 +11,14 @@ import React, {
 
 export type Locale = "ko" | "en";
 
+declare global {
+  interface Window {
+    __EPDCAL_CONFIG__?: {
+      defaultLocale?: string;
+    };
+  }
+}
+
 type Messages = Record<string, string>;
 
 const ko: Messages = {
@@ -236,6 +244,11 @@ function detectInitialLocale(): Locale {
   } catch {
     // localStorage 접근 실패 시 무시
   }
+
+  const fromServerConfig = normalizeLocale(
+    window.__EPDCAL_CONFIG__?.defaultLocale,
+  );
+  if (fromServerConfig) return fromServerConfig;
 
   if (typeof navigator !== "undefined") {
     const navLang =

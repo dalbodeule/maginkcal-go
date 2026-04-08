@@ -122,6 +122,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/health", s.handleHealth)
 	s.mux.HandleFunc("/api/events", s.handleEvents)
 	s.mux.HandleFunc("/api/battery", s.handleBattery)
+	s.mux.HandleFunc("/app-config.js", s.handleAppConfigJS)
 	s.mux.HandleFunc("/preview.png", s.handlePreview)
 
 	// Static Next.js exported UI (embedded via Go 1.16+ embed.FS).
@@ -191,6 +192,37 @@ func (s *Server) handleBattery(w http.ResponseWriter, r *http.Request) {
 		VoltageMv: status.VoltageMv,
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleAppConfigJS exposes a tiny runtime config payload for the static Web UI.
+//
+// The Next.js export is fully static, so browser-side code cannot directly read
+// Go config values at build time. This endpoint bridges selected runtime values
+// (currently default locale) into the browser before hydration.
+func (s *Server) handleAppConfigJS(w http.ResponseWriter, _ *http.Request) {
+	type browserRuntimeConfig struct {
+		DefaultLocale string `json:"defaultLocale"`
+	}
+
+	runtimeCfg := browserRuntimeConfig{
+		DefaultLocale: "ko",
+	}
+	if s.cfg != nil && s.cfg.DefaultLocale != "" {
+		runtimeCfg.DefaultLocale = s.cfg.DefaultLocale
+	}
+
+	payload, err := json.Marshal(runtimeCfg)
+	if err != nil {
+		appLog.Error("failed to marshal browser runtime config", err)
+		http.Error(w, "failed to build runtime config", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write([]byte("window.__EPDCAL_CONFIG__ = "))
+	_, _ = w.Write(payload)
+	_, _ = w.Write([]byte(";\nif (window.__EPDCAL_CONFIG__ && window.__EPDCAL_CONFIG__.defaultLocale) { document.documentElement.lang = window.__EPDCAL_CONFIG__.defaultLocale; }\n"))
 }
 
 // staticFileServer returns an http.Handler that serves the embedded
