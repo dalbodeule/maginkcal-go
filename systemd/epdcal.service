@@ -7,10 +7,31 @@ Wants=network-online.target
 Type=simple
 ExecStart=/usr/local/bin/epdcal --config /etc/epdcal/config.yaml
 WorkingDirectory=/var/lib/epdcal
-User=pi
-Group=pi
+User=epdcal
+Group=epdcal
 Restart=on-failure
 RestartSec=5s
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+
+# Allow writing only where needed
+ReadWritePaths=/var/lib/epdcal
+
+# If you need to bind a privileged port (<1024), uncomment:
+# AmbientCapabilities=CAP_NET_BIND_SERVICE
 
 # 로그는 journalctl -u epdcal 로 확인
 # 필요 시 환경 변수 파일을 추가해서 옵션을 오버라이드할 수 있다.

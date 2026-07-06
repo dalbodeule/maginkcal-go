@@ -91,11 +91,32 @@ clean:
 install: build systemd-install
 
 systemd-install:
+	# Create a dedicated system user for the service (no home, no shell).
+	# If the user already exists, do nothing.
+	@if ! id -u epdcal >/dev/null 2>&1; then \
+		if command -v useradd >/dev/null 2>&1; then \
+			useradd --system --no-create-home --shell /usr/sbin/nologin epdcal; \
+		elif command -v adduser >/dev/null 2>&1; then \
+			adduser --system --no-create-home --disabled-login --shell /usr/sbin/nologin epdcal; \
+		else \
+			echo "No useradd/adduser found; create system user 'epdcal' manually."; \
+			exit 1; \
+		fi; \
+	fi
+
 	install -d $(PREFIX)/bin
 	install -m 0755 $(BINARY) $(PREFIX)/bin/$(BINARY)
 	install -d $(ETCDIR)
+	chown epdcal:epdcal $(ETCDIR)
 	chmod 700 $(ETCDIR)
+	# Create a sample config on first install. Keep permission 0600 since it can
+	# contain secrets (ICS private URLs, basic auth).
+	@if [ ! -f $(ETCDIR)/config.yaml ]; then \
+		install -m 0600 systemd/config.yaml.sample $(ETCDIR)/config.yaml; \
+		chown epdcal:epdcal $(ETCDIR)/config.yaml; \
+	fi
 	install -d $(VARLIB)
+	chown epdcal:epdcal $(VARLIB)
 	chmod 700 $(VARLIB)
 	install -d $(SYSTEMD_DIR)
 	install -m 0644 systemd/epdcal.service $(SYSTEMD_DIR)/epdcal.service

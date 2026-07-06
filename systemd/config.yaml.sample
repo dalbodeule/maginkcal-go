@@ -1,0 +1,33 @@
+listen: "127.0.0.1:8080"
+timezone: "Asia/Seoul"
+
+# Cron schedule for periodic refresh (every 15 minutes by default).
+refresh: "*/15 * * * *"
+
+horizon_days: 7
+show_all_day: true
+
+# monday | sunday
+week_start: "monday"
+
+# 90 (clockwise) | 270 (counter-clockwise)
+rotation: 90
+
+default_locale: "ko"
+
+# Keywords that should be rendered in the red plane.
+highlight_red:
+  - "휴일"
+  - "휴가"
+  - "중요"
+
+# Optional Basic Auth for Web UI/API (all endpoints except /health).
+# basic_auth:
+#   username: "admin"
+#   password: "change-me"
+
+# ICS subscription sources.
+ics:
+  - id: "personal"
+    name: "Personal"
+    url: "https://example.com/calendar.ics"
