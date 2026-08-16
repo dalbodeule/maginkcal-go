@@ -9,6 +9,7 @@ ExecStart=@PREFIX@/bin/@BINARY@ --config @ETCDIR@/config.yaml
 WorkingDirectory=@VARLIB@
 User=@SERVICE_USER@
 Group=@SERVICE_GROUP@
+SupplementaryGroups=gpio
 Restart=on-failure
 RestartSec=5s
 
@@ -32,6 +33,10 @@ ReadWritePaths=@ETCDIR@ @VARLIB@
 # Chromium in this project needs executable memory for the browser process.
 # Leave MDWE off in the default unit so headless capture can start reliably.
 MemoryDenyWriteExecute=false
+
+# GPIO access for the Waveshare controller.
+DeviceAllow=/dev/gpiochip0 rw
+DeviceAllow=/dev/gpiochip4 rw
 
 # Keep HOME inside the writable state dir for Chromium/temp profile behavior.
 Environment=HOME=@VARLIB@

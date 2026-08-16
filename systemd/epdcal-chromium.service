@@ -9,6 +9,7 @@ ExecStart=@PREFIX@/bin/@BINARY@ --config @ETCDIR@/config.yaml
 WorkingDirectory=@VARLIB@
 User=@SERVICE_USER@
 Group=@SERVICE_GROUP@
+SupplementaryGroups=gpio
 Restart=on-failure
 RestartSec=5s
 
@@ -29,6 +30,10 @@ RestrictRealtime=true
 MemoryDenyWriteExecute=false
 RestrictSUIDSGID=false
 RestrictNamespaces=false
+
+# GPIO access for the Waveshare controller.
+DeviceAllow=/dev/gpiochip0 rw
+DeviceAllow=/dev/gpiochip4 rw
 
 # Allow writes to the config directory and runtime state.
 ReadWritePaths=@ETCDIR@ @VARLIB@

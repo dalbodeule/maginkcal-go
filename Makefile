@@ -126,8 +126,10 @@ systemd-install:
 		chown $(SERVICE_USER):$(SERVICE_GROUP) $(ETCDIR)/config.yaml; \
 	fi
 	install -d $(VARLIB)
-	chown $(SERVICE_USER):$(SERVICE_GROUP) $(VARLIB)
+	install -d $(VARLIB)/ics-cache
+	chown -R $(SERVICE_USER):$(SERVICE_GROUP) $(VARLIB)
 	chmod 700 $(VARLIB)
+	chmod 700 $(VARLIB)/ics-cache
 	install -d $(SYSTEMD_DIR)
 	$(RENDER_SYSTEMD_UNIT) systemd/epdcal.service > $(SYSTEMD_DIR)/epdcal.service
 	$(RENDER_SYSTEMD_UNIT) systemd/epdcal-chromium.service > $(SYSTEMD_DIR)/epdcal-chromium.service
