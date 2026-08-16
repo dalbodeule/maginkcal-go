@@ -373,8 +373,7 @@ epdcal --config /etc/epdcal/config.yaml
 ## 10. systemd 서비스
 
 설치 스크립트는 `Makefile`의 `PREFIX`, `ETCDIR`, `VARLIB` 값을 반영해서
-`/etc/systemd/system/epdcal.service` 와
-`/etc/systemd/system/epdcal-chromium.service` 를 생성한다.
+`/etc/systemd/system/epdcal.service` 를 생성한다.
 
 기본 유닛 `systemd/epdcal.service`:
 
@@ -398,30 +397,6 @@ ReadWritePaths=/etc/epdcal /var/lib/epdcal
 WantedBy=multi-user.target
 ```
 
-Chromium 호환 우선 유닛 `systemd/epdcal-chromium.service`:
-
-```ini
-[Unit]
-Description=EPD ICS Calendar Display Service (Chromium Compatibility)
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/epdcal --config /etc/epdcal/config.yaml
-WorkingDirectory=/var/lib/epdcal
-Restart=on-failure
-User=epdcal
-Group=epdcal
-MemoryDenyWriteExecute=false
-RestrictSUIDSGID=false
-RestrictNamespaces=false
-ReadWritePaths=/etc/epdcal /var/lib/epdcal
-
-[Install]
-WantedBy=multi-user.target
-```
-
 설치:
 
 ```bash
@@ -437,11 +412,7 @@ journalctl -u epdcal -f
 ```
 
 Chromium 쪽에서 하드닝 때문에 문제를 계속 내면:
-
-```bash
-sudo systemctl disable --now epdcal
-sudo systemctl enable --now epdcal-chromium
-```
+이제는 `epdcal.service` 하나만 사용하면 된다.
 
 ---
 

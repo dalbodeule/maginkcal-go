@@ -132,6 +132,4 @@ systemd-install:
 	chmod 700 $(VARLIB)/ics-cache
 	install -d $(SYSTEMD_DIR)
 	$(RENDER_SYSTEMD_UNIT) systemd/epdcal.service > $(SYSTEMD_DIR)/epdcal.service
-	$(RENDER_SYSTEMD_UNIT) systemd/epdcal-chromium.service > $(SYSTEMD_DIR)/epdcal-chromium.service
 	@echo "Run 'sudo systemctl daemon-reload && sudo systemctl enable --now epdcal' to start the default unit."
-	@echo "If Chromium still needs looser hardening, enable 'epdcal-chromium' instead."
