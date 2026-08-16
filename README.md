@@ -3,6 +3,8 @@
 `epdcal` 은 Raspberry Pi (Raspbian/ARM) 에서 동작하는 단일 Go 애플리케이션으로,  
 Waveshare 12.48" tri‑color e‑paper (B) 패널(1304x984)에 **ICS(iCalendar) 구독 캘린더**를 표시한다.
 
+- 현재 버전: `0.1.0`
+
 - 여러 개의 ICS URL 구독
 - 타임존(TZID/VTIMEZONE), 반복(RRULE), 예외(EXDATE), override(RECURRENCE-ID), all‑day 이벤트 처리
 - 로컬 Web UI 로 설정/상태 확인 및 수동 Refresh/Render
