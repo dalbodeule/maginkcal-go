@@ -3,6 +3,8 @@
 `epdcal` 은 Raspberry Pi (Raspbian/ARM) 에서 동작하는 단일 Go 애플리케이션으로,  
 Waveshare 12.48" tri‑color e‑paper (B) 패널(1304x984)에 **ICS(iCalendar) 구독 캘린더**를 표시한다.
 
+- 현재 버전: `0.1.0`
+
 - 여러 개의 ICS URL 구독
 - 타임존(TZID/VTIMEZONE), 반복(RRULE), 예외(EXDATE), override(RECURRENCE-ID), all‑day 이벤트 처리
 - 로컬 Web UI 로 설정/상태 확인 및 수동 Refresh/Render
@@ -372,20 +374,26 @@ epdcal --config /etc/epdcal/config.yaml
 
 ## 10. systemd 서비스
 
-예시 `systemd/epdcal.service`:
+설치 스크립트는 `Makefile`의 `PREFIX`, `ETCDIR`, `VARLIB` 값을 반영해서
+`/etc/systemd/system/epdcal.service` 를 생성한다.
+
+기본 유닛 `systemd/epdcal.service`:
 
 ```ini
 [Unit]
-Description=EPD ICS Calendar
+Description=EPD ICS Calendar Display Service
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/epdcal --config /etc/epdcal/config.yaml
+WorkingDirectory=/var/lib/epdcal
 Restart=on-failure
-User=pi
-Group=pi
+User=epdcal
+Group=epdcal
+MemoryDenyWriteExecute=false
+ReadWritePaths=/etc/epdcal /var/lib/epdcal
 
 [Install]
 WantedBy=multi-user.target
@@ -394,10 +402,8 @@ WantedBy=multi-user.target
 설치:
 
 ```bash
-sudo cp systemd/epdcal.service /etc/systemd/system/epdcal.service
 sudo systemctl daemon-reload
-sudo systemctl enable epdcal
-sudo systemctl start epdcal
+sudo systemctl enable --now epdcal
 ```
 
 상태 확인:
@@ -406,6 +412,9 @@ sudo systemctl start epdcal
 systemctl status epdcal
 journalctl -u epdcal -f
 ```
+
+Chromium 쪽에서 하드닝 때문에 문제를 계속 내면:
+이제는 `epdcal.service` 하나만 사용하면 된다.
 
 ---
 

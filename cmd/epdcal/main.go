@@ -16,6 +16,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 
+	"epdcal/internal/buildinfo"
 	"epdcal/internal/capture"
 	"epdcal/internal/config"
 	"epdcal/internal/convert"
@@ -36,7 +37,7 @@ type flagConfig struct {
 }
 
 func main() {
-	appLog.Info("epdcal starting", "version", "0.0.1-dev")
+	appLog.Info("epdcal starting", "version", buildinfo.Version)
 
 	// Parse CLI flags.
 	flags := parseFlags()
