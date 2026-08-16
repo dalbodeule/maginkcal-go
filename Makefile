@@ -6,6 +6,16 @@ PREFIX ?= /usr/local
 ETCDIR ?= /etc/epdcal
 VARLIB ?= /var/lib/epdcal
 SYSTEMD_DIR ?= /etc/systemd/system
+SERVICE_USER ?= epdcal
+SERVICE_GROUP ?= epdcal
+
+RENDER_SYSTEMD_UNIT = sed \
+	-e 's|@PREFIX@|$(PREFIX)|g' \
+	-e 's|@BINARY@|$(BINARY)|g' \
+	-e 's|@ETCDIR@|$(ETCDIR)|g' \
+	-e 's|@VARLIB@|$(VARLIB)|g' \
+	-e 's|@SERVICE_USER@|$(SERVICE_USER)|g' \
+	-e 's|@SERVICE_GROUP@|$(SERVICE_GROUP)|g'
 
 .PHONY: all build build-pi build-pi64 build-pi-cgo test run clean install systemd-install webui-build
 
@@ -93,13 +103,13 @@ install: build systemd-install
 systemd-install:
 	# Create a dedicated system user for the service (no home, no shell).
 	# If the user already exists, do nothing.
-	@if ! id -u epdcal >/dev/null 2>&1; then \
+	@if ! id -u $(SERVICE_USER) >/dev/null 2>&1; then \
 		if command -v useradd >/dev/null 2>&1; then \
-			useradd --system --no-create-home --shell /usr/sbin/nologin epdcal; \
+			useradd --system --no-create-home --shell /usr/sbin/nologin $(SERVICE_USER); \
 		elif command -v adduser >/dev/null 2>&1; then \
-			adduser --system --no-create-home --disabled-login --shell /usr/sbin/nologin epdcal; \
+			adduser --system --no-create-home --disabled-login --shell /usr/sbin/nologin $(SERVICE_USER); \
 		else \
-			echo "No useradd/adduser found; create system user 'epdcal' manually."; \
+			echo "No useradd/adduser found; create system user '$(SERVICE_USER)' manually."; \
 			exit 1; \
 		fi; \
 	fi
@@ -107,17 +117,19 @@ systemd-install:
 	install -d $(PREFIX)/bin
 	install -m 0755 $(BINARY) $(PREFIX)/bin/$(BINARY)
 	install -d $(ETCDIR)
-	chown epdcal:epdcal $(ETCDIR)
+	chown $(SERVICE_USER):$(SERVICE_GROUP) $(ETCDIR)
 	chmod 700 $(ETCDIR)
 	# Create a sample config on first install. Keep permission 0600 since it can
 	# contain secrets (ICS private URLs, basic auth).
 	@if [ ! -f $(ETCDIR)/config.yaml ]; then \
 		install -m 0600 systemd/config.yaml.sample $(ETCDIR)/config.yaml; \
-		chown epdcal:epdcal $(ETCDIR)/config.yaml; \
+		chown $(SERVICE_USER):$(SERVICE_GROUP) $(ETCDIR)/config.yaml; \
 	fi
 	install -d $(VARLIB)
-	chown epdcal:epdcal $(VARLIB)
+	chown $(SERVICE_USER):$(SERVICE_GROUP) $(VARLIB)
 	chmod 700 $(VARLIB)
 	install -d $(SYSTEMD_DIR)
-	install -m 0644 systemd/epdcal.service $(SYSTEMD_DIR)/epdcal.service
-	@echo "Run 'sudo systemctl daemon-reload && sudo systemctl enable --now epdcal' to start the service."
+	$(RENDER_SYSTEMD_UNIT) systemd/epdcal.service > $(SYSTEMD_DIR)/epdcal.service
+	$(RENDER_SYSTEMD_UNIT) systemd/epdcal-chromium.service > $(SYSTEMD_DIR)/epdcal-chromium.service
+	@echo "Run 'sudo systemctl daemon-reload && sudo systemctl enable --now epdcal' to start the default unit."
+	@echo "If Chromium still needs looser hardening, enable 'epdcal-chromium' instead."

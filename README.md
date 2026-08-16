@@ -372,20 +372,51 @@ epdcal --config /etc/epdcal/config.yaml
 
 ## 10. systemd 서비스
 
-예시 `systemd/epdcal.service`:
+설치 스크립트는 `Makefile`의 `PREFIX`, `ETCDIR`, `VARLIB` 값을 반영해서
+`/etc/systemd/system/epdcal.service` 와
+`/etc/systemd/system/epdcal-chromium.service` 를 생성한다.
+
+기본 유닛 `systemd/epdcal.service`:
 
 ```ini
 [Unit]
-Description=EPD ICS Calendar
+Description=EPD ICS Calendar Display Service
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/epdcal --config /etc/epdcal/config.yaml
+WorkingDirectory=/var/lib/epdcal
 Restart=on-failure
-User=pi
-Group=pi
+User=epdcal
+Group=epdcal
+MemoryDenyWriteExecute=false
+ReadWritePaths=/etc/epdcal /var/lib/epdcal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Chromium 호환 우선 유닛 `systemd/epdcal-chromium.service`:
+
+```ini
+[Unit]
+Description=EPD ICS Calendar Display Service (Chromium Compatibility)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/epdcal --config /etc/epdcal/config.yaml
+WorkingDirectory=/var/lib/epdcal
+Restart=on-failure
+User=epdcal
+Group=epdcal
+MemoryDenyWriteExecute=false
+RestrictSUIDSGID=false
+RestrictNamespaces=false
+ReadWritePaths=/etc/epdcal /var/lib/epdcal
 
 [Install]
 WantedBy=multi-user.target
@@ -394,10 +425,8 @@ WantedBy=multi-user.target
 설치:
 
 ```bash
-sudo cp systemd/epdcal.service /etc/systemd/system/epdcal.service
 sudo systemctl daemon-reload
-sudo systemctl enable epdcal
-sudo systemctl start epdcal
+sudo systemctl enable --now epdcal
 ```
 
 상태 확인:
@@ -405,6 +434,13 @@ sudo systemctl start epdcal
 ```bash
 systemctl status epdcal
 journalctl -u epdcal -f
+```
+
+Chromium 쪽에서 하드닝 때문에 문제를 계속 내면:
+
+```bash
+sudo systemctl disable --now epdcal
+sudo systemctl enable --now epdcal-chromium
 ```
 
 ---
