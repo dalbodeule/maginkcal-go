@@ -10,8 +10,10 @@ WorkingDirectory=@VARLIB@
 User=@SERVICE_USER@
 Group=@SERVICE_GROUP@
 SupplementaryGroups=gpio
+SupplementaryGroups=i2c
 Restart=on-failure
 RestartSec=5s
+ExecStartPre=/bin/sleep 60
 
 # Hardening
 NoNewPrivileges=true
@@ -37,6 +39,9 @@ MemoryDenyWriteExecute=false
 # GPIO access for the Waveshare controller.
 DeviceAllow=/dev/gpiochip0 rw
 DeviceAllow=/dev/gpiochip4 rw
+
+# I2C access for the battery reader (e.g. PiSugar).
+DeviceAllow=/dev/i2c-1 rw
 
 # Keep HOME inside the writable state dir for Chromium/temp profile behavior.
 Environment=HOME=@VARLIB@
