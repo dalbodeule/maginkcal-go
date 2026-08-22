@@ -3,12 +3,13 @@
 `epdcal` 은 Raspberry Pi (Raspbian/ARM) 에서 동작하는 단일 Go 애플리케이션으로,  
 Waveshare 12.48" tri‑color e‑paper (B) 패널(1304x984)에 **ICS(iCalendar) 구독 캘린더**를 표시한다.
 
-- 현재 버전: `0.1.0`
+- 현재 버전: `0.1.1`
 
 - 여러 개의 ICS URL 구독
 - 타임존(TZID/VTIMEZONE), 반복(RRULE), 예외(EXDATE), override(RECURRENCE-ID), all‑day 이벤트 처리
 - 로컬 Web UI 로 설정/상태 확인 및 수동 Refresh/Render
 - cgo 를 통해 Waveshare C 드라이버(`EPD_12in48B.h`) 호출
+- 배터리 상태 조회 시 I2C(`/dev/i2c-1`) 접근
 - Google API / OAuth / token.pickle / Python / PIL 등은 **전혀 사용하지 않음**
 
 이 문서는 설치/구동 방법, 설정 방법, ICS Recurrence/TZ 처리 전략, 한계점, 문제 해결 방법을 설명한다.  
@@ -392,6 +393,9 @@ WorkingDirectory=/var/lib/epdcal
 Restart=on-failure
 User=epdcal
 Group=epdcal
+SupplementaryGroups=gpio
+SupplementaryGroups=i2c
+ExecStartPre=/bin/sleep 60
 MemoryDenyWriteExecute=false
 ReadWritePaths=/etc/epdcal /var/lib/epdcal
 
@@ -413,8 +417,13 @@ systemctl status epdcal
 journalctl -u epdcal -f
 ```
 
-Chromium 쪽에서 하드닝 때문에 문제를 계속 내면:
-이제는 `epdcal.service` 하나만 사용하면 된다.
+I2C 배터리 정보를 제대로 읽으려면 다음이 전제되어야 한다.
+
+- Raspberry Pi 에서 I2C 가 활성화되어 있어야 한다
+- `/dev/i2c-1` 이 존재해야 한다
+- 서비스 계정이 `i2c` 그룹 권한을 가져야 한다
+
+60초 지연은 부팅 직후 GPIO/I2C 디바이스와 네트워크가 안정화될 시간을 주기 위한 것이다.
 
 ---
 
