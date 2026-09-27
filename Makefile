@@ -141,4 +141,15 @@ systemd-install:
 	chmod 700 $(VARLIB)/ics-cache
 	install -d $(SYSTEMD_DIR)
 	$(RENDER_SYSTEMD_UNIT) systemd/epdcal.service > $(SYSTEMD_DIR)/epdcal.service
-	@echo "Run 'sudo systemctl daemon-reload && sudo systemctl enable --now epdcal' to start the default unit."
+	@if command -v systemctl >/dev/null 2>&1; then \
+		systemctl daemon-reload; \
+		if systemctl is-active --quiet epdcal; then \
+			systemctl restart epdcal; \
+			echo "==> Restarted epdcal so the newly installed binary is running."; \
+		else \
+			systemctl enable epdcal >/dev/null 2>&1 || true; \
+			echo "==> Installed epdcal. Start it with: sudo systemctl start epdcal"; \
+		fi; \
+	else \
+		echo "Run 'sudo systemctl daemon-reload && sudo systemctl restart epdcal' to load the new binary."; \
+	fi

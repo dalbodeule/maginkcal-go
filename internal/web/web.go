@@ -288,7 +288,7 @@ func (s *Server) staticFileServer() http.Handler {
 		// /health, /preview.png 는 ServeMux 에 별도 핸들러가 등록되어 있어
 		// 정상적인 경우 이 핸들러까지 도달하지 않는다.
 		// 존재하지 않는 브라우저 경로는 Next가 생성한 404 화면으로 통일한다.
-		cleanPath := strings.TrimPrefix(path, "/")
+		cleanPath := strings.Trim(strings.TrimPrefix(path, "/"), "/")
 		if cleanPath != "" {
 			if _, err := fs.Stat(sub, cleanPath); err != nil {
 				s.serveEmbeddedErrorPage(w, http.StatusNotFound, "404.html", "404/index.html")

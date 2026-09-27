@@ -63,3 +63,14 @@ func TestMissingBrowserRouteUsesNotFoundUI(t *testing.T) {
 		t.Fatalf("status/content type = %d/%q", w.Code, w.Header().Get("Content-Type"))
 	}
 }
+
+func TestTrailingSlashPagesAreServed(t *testing.T) {
+	s := NewServer(config.DefaultConfig(), true)
+	for _, path := range []string{"/config/", "/calendar/"} {
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if w.Code != http.StatusOK || !strings.Contains(w.Header().Get("Content-Type"), "text/html") {
+			t.Fatalf("%s: status/content type = %d/%q", path, w.Code, w.Header().Get("Content-Type"))
+		}
+	}
+}

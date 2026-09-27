@@ -171,13 +171,17 @@ EPD 출력에는 사용할 수 없다. 개발 머신에서 전체 빌드는 `cd 
 ### 4.3 설치 (예시)
 
 ```bash
+# Pi에서 C 드라이버 포함 새 바이너리 생성
+make build-pi-cgo
+
+# 바이너리, unit 파일 설치 및 실행 중 서비스 재시작
 sudo make systemd-install
-sudo systemctl daemon-reload
-sudo systemctl enable --now epdcal
 ```
 
 `systemd-install`은 `epdcal` 계정과 그룹, 설정 파일, 캐시 디렉터리의
-권한을 맞춘다. 먼저 `make build-pi-cgo`로 바이너리를 생성해야 한다.
+권한을 맞추고 unit 파일을 다시 생성한다. 실행 중인 서비스가 있으면
+`daemon-reload` 후 자동으로 재시작하므로 새로 설치한 바이너리가 즉시 사용된다.
+Pi에서는 먼저 `make build-pi-cgo`로 바이너리를 생성해야 한다.
 설정 파일이 없으면 샘플을 설치한다. Web UI에서 저장한 설정은
 파일과 실행 중 메모리에 함께 반영된다.
 
