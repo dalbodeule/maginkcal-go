@@ -25,9 +25,25 @@ interface AppConfig {
   horizon_days: number;
   show_all_day: boolean;
   highlight_red_keywords: string[];
+  holiday_prefixes: string[];
   week_start?: WeekStart;
   ics: ICSConfigItem[];
   basic_auth?: BasicAuthConfig;
+}
+
+interface RefreshStatus {
+  running: boolean;
+  last_started_at?: string;
+  last_ended_at?: string;
+  next_allowed_at?: string;
+  last_error?: string;
+}
+
+interface ICSStatus {
+  id: string;
+  state: "ok" | "http_error" | "network_error" | "invalid_ics" | "too_large";
+  http_status?: number;
+  event_count?: number;
 }
 
 function ConfigContent() {
@@ -39,6 +55,61 @@ function ConfigContent() {
   const [error, setError] = useState<string | null>(null);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [previewReloadKey, setPreviewReloadKey] = useState(0);
+  const [refreshStatus, setRefreshStatus] = useState<RefreshStatus | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [clock, setClock] = useState(Date.now());
+  const [holidayText, setHolidayText] = useState("");
+  const [icsStatuses, setICSStatuses] = useState<ICSStatus[] | null>(null);
+  const [checkingICS, setCheckingICS] = useState(false);
+  const [icsCheckError, setICSCheckError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let previousRunning = false;
+    const poll = async () => {
+      try {
+        const res = await fetch("/api/refresh", { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const status: RefreshStatus = await res.json();
+        if (cancelled) return;
+        if (previousRunning && !status.running && !status.last_error) {
+          setPreviewReloadKey((key) => key + 1);
+        }
+        previousRunning = status.running;
+        setRefreshStatus(status);
+      } catch (e: unknown) {
+        if (!cancelled) setRefreshError(e instanceof Error ? e.message : String(e));
+      }
+    };
+    void poll();
+    const clockInterval = window.setInterval(() => setClock(Date.now()), 1000);
+    const pollInterval = window.setInterval(() => void poll(), 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(clockInterval);
+      window.clearInterval(pollInterval);
+    };
+  }, []);
+
+  const cooldownSeconds = refreshStatus?.next_allowed_at
+    ? Math.max(0, Math.ceil((new Date(refreshStatus.next_allowed_at).getTime() - clock) / 1000))
+    : 0;
+
+  const requestRefresh = async () => {
+    setRefreshError(null);
+    try {
+      const res = await fetch("/api/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const status: RefreshStatus = await res.json();
+      setRefreshStatus(status);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (e: unknown) {
+      setRefreshError(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   // /api/config 로부터 설정을 가져온다.
   useEffect(() => {
@@ -63,6 +134,7 @@ function ConfigContent() {
           show_all_day:
             typeof data.show_all_day === "boolean" ? data.show_all_day : true,
           highlight_red_keywords: data.highlight_red_keywords || [],
+          holiday_prefixes: data.holiday_prefixes ?? [],
           week_start: data.week_start === "sunday" ? "sunday" : "monday",
           ics: data.ics || [],
           basic_auth: data.basic_auth || {
@@ -73,6 +145,7 @@ function ConfigContent() {
         };
 
         setConfig(safeConfig);
+        setHolidayText(safeConfig.holiday_prefixes.join("\n"));
         setError(null);
       } catch (e: unknown) {
         if (!cancelled) {
@@ -101,17 +174,36 @@ function ConfigContent() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(config),
+        body: JSON.stringify({
+          ...config,
+          holiday_prefixes: holidayText.split(/[,\n]/).map((item) => item.trim()).filter(Boolean),
+        }),
       });
       if (!res.ok) {
         const data: { error?: string } = await res.json().catch(() => ({}));
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
       setSaveMessage(t("config.save_ok"));
+      setICSStatuses(null);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : t("config.save_error"));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const checkICSAccess = async () => {
+    setCheckingICS(true);
+    setICSCheckError(null);
+    try {
+      const res = await fetch("/api/ics/status", { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data: { sources: ICSStatus[] } = await res.json();
+      setICSStatuses(data.sources);
+    } catch (e: unknown) {
+      setICSCheckError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCheckingICS(false);
     }
   };
 
@@ -128,6 +220,7 @@ function ConfigContent() {
       ],
     };
     setConfig(next);
+    setICSStatuses(null);
   };
 
   const handleRemoveICS = (index: number) => {
@@ -135,6 +228,7 @@ function ConfigContent() {
     const nextList = config.ics.slice();
     nextList.splice(index, 1);
     setConfig({ ...config, ics: nextList });
+    setICSStatuses(null);
   };
 
   const handleUpdateICS = (
@@ -147,6 +241,7 @@ function ConfigContent() {
       i === index ? { ...item, [field]: value } : item,
     );
     setConfig({ ...config, ics: nextList });
+    setICSStatuses(null);
   };
 
   const handleToggleAllDay = () => {
@@ -202,7 +297,7 @@ function ConfigContent() {
       className={`${nanumGothic.className} min-h-screen bg-slate-100 text-slate-900 flex flex-col items-center py-4 px-2 sm:px-4`}
     >
       <main className="w-full max-w-6xl rounded-xl bg-white shadow-sm px-4 py-5 sm:px-6 sm:py-6">
-        <header className="mb-4 border-b border-slate-200 pb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+		<header className="mb-4 border-b border-slate-200 pb-3 flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between [word-break:keep-all]">
           <div>
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
               {t("config.title")}
@@ -211,18 +306,18 @@ function ConfigContent() {
               {t("config.subtitle")}
             </p>
           </div>
-          <div className="flex items-center gap-2 text-xs sm:text-sm">
-            <span className="text-slate-500">{t("config.nav.label")}</span>
-            <div className="inline-flex rounded-full border border-slate-300 bg-slate-100 p-0.5">
+          <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm">
+            <span className="text-slate-500 whitespace-nowrap">{t("config.nav.label")}</span>
+            <div className="inline-flex shrink-0 rounded-full border border-slate-300 bg-slate-100 p-0.5">
               <a
                 href="/calendar"
-                className="px-3 py-1 rounded-full text-slate-700 hover:bg-slate-200"
+                className="px-3 py-1 rounded-full whitespace-nowrap text-slate-700 hover:bg-slate-200"
               >
                 {t("common.goto.calendar")}
               </a>
               <a
                 href="/config"
-                className="px-3 py-1 rounded-full bg-slate-900 text-white"
+                className="px-3 py-1 rounded-full whitespace-nowrap bg-slate-900 text-white"
               >
                 {t("common.goto.config")}
               </a>
@@ -344,6 +439,30 @@ function ConfigContent() {
                       {t("config.ics.add")}
                     </button>
                   </div>
+                  <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => void checkICSAccess()}
+                      disabled={checkingICS || saving}
+                      className="rounded border border-slate-300 bg-slate-50 px-2 py-1 text-slate-700 disabled:opacity-50"
+                    >
+                      {checkingICS ? t("config.ics.checking") : t("config.ics.check")}
+                    </button>
+                    <span className="text-slate-500">{t("config.ics.check_hint")}</span>
+                  </div>
+                  {icsCheckError && <p className="text-[11px] text-red-700">{icsCheckError}</p>}
+                  {icsStatuses && (
+                    <div className="space-y-1 text-[11px]">
+                      {icsStatuses.length === 0 && <p className="text-slate-500">{t("config.ics.empty")}</p>}
+                      {icsStatuses.map((item) => (
+                        <p key={item.id} className={item.state === "ok" ? "text-emerald-700" : "text-red-700"}>
+                          {item.id}: {t(`config.ics.status.${item.state}`)}
+                          {item.http_status ? ` (HTTP ${item.http_status})` : ""}
+                          {item.state === "ok" ? ` · ${item.event_count ?? 0} ${t("config.ics.events")}` : ""}
+                        </p>
+                      ))}
+                    </div>
+                  )}
                   {config.ics.length === 0 ? (
                     <p className="text-[11px] text-slate-500">
                       {t("config.ics.empty")}
@@ -406,6 +525,17 @@ function ConfigContent() {
                       className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-xs"
                     />
                   </label>
+                  <label className="block text-[11px] text-slate-600">
+                    {t("config.holiday_prefixes.label")}
+                    <textarea
+                      rows={2}
+                      value={holidayText}
+                      onChange={(e) => setHolidayText(e.target.value)}
+                      placeholder={t("config.holiday_prefixes.placeholder")}
+                      className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                    />
+                    <span className="mt-1 block text-slate-500">{t("config.holiday_prefixes.hint")}</span>
+                  </label>
 
                   <div className="border-t border-slate-200 pt-2 space-y-2">
                     <label className="inline-flex items-center gap-2 text-[11px] text-slate-600">
@@ -464,6 +594,26 @@ function ConfigContent() {
 
           {/* Right: Preview image */}
           <div className="space-y-3">
+            <div className="rounded-lg border border-slate-200 p-3 space-y-2 text-xs [word-break:keep-all]">
+              <button
+                type="button"
+                onClick={() => void requestRefresh()}
+                disabled={!refreshStatus || refreshStatus.running || cooldownSeconds > 0}
+                className="rounded bg-slate-900 px-3 py-1.5 font-semibold text-white disabled:opacity-50"
+              >
+                {t("config.refresh_now")}
+              </button>
+              <p className="text-slate-600">
+                {refreshStatus?.running
+                  ? t("config.refresh_running")
+                  : cooldownSeconds > 0
+                    ? `${t("config.refresh_cooldown")} ${Math.floor(cooldownSeconds / 60)}:${String(cooldownSeconds % 60).padStart(2, "0")}`
+                    : t("config.refresh_ready")}
+              </p>
+              {refreshStatus?.last_error && <p className="text-red-700">{refreshStatus.last_error}</p>}
+              {refreshError && <p className="text-red-700">{refreshError}</p>}
+              <p className="text-slate-500">{t("config.refresh_hint")}</p>
+            </div>
             <div className="flex items-center justify-between">
               <h2 className="text-sm sm:text-base font-semibold text-slate-800">
                 {t("common.preview.title")}

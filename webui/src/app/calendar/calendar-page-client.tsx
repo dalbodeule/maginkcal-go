@@ -21,6 +21,7 @@ interface EventsResponse {
   display_timezone: string;
   week_start?: string;
   occurrences?: OccurrenceDTO[];
+  holiday_dates?: string[];
 }
 
 interface OccurrenceDTO {
@@ -32,6 +33,7 @@ interface OccurrenceDTO {
   location: string;
   all_day: boolean;
   highlight_red: boolean;
+  holiday: boolean;
   start: string;
   end: string;
 }
@@ -63,6 +65,7 @@ function CalendarContent() {
   const [eventsByDate, setEventsByDate] = useState<
     Record<string, OccurrenceDTO[]>
   >({});
+  const [holidayDates, setHolidayDates] = useState<Record<string, boolean>>({});
   const [batteryPercent, setBatteryPercent] = useState<number | null>(null);
   const [eventsLoaded, setEventsLoaded] = useState(false);
   const [batteryLoaded, setBatteryLoaded] = useState(false);
@@ -103,6 +106,7 @@ function CalendarContent() {
           grouped[key].push(occ);
         }
         setEventsByDate(grouped);
+        setHolidayDates(Object.fromEntries((data.holiday_dates ?? []).map((key) => [key, true])));
 
         // 가장 마지막 업데이트 시각은 클라이언트 기준 fetch 완료 시점으로 사용
         setLastUpdatedAt(new Date());
@@ -258,19 +262,15 @@ function CalendarContent() {
 
               const dateKey = dateKeyFromDate(day.date);
               const events = eventsByDate[dateKey] ?? [];
+              const holiday = holidayDates[dateKey] === true;
 
               // 색상 규칙:
               // - 이번 달인 평일: 검정
-              // - 이번 달인 주말: 빨강
-              // - 이번 달이 아닌 주말: 빨강
+              // - 주말 또는 휴일: 빨강
               // - 이번 달이 아닌 평일: 회색
-              const dateColorClass = !inCurrentMonth
-                ? day.isWeekend
-                  ? "text-red-600"
-                  : "text-slate-300"
-                : day.isWeekend
-                  ? "text-red-600"
-                  : "text-slate-900";
+              const dateColorClass = day.isWeekend || holiday
+                ? "text-red-600"
+                : inCurrentMonth ? "text-slate-900" : "text-slate-300";
 
               const cellBgClass = !inCurrentMonth ? "bg-slate-50" : "bg-white";
 

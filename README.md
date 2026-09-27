@@ -43,7 +43,9 @@ Waveshare 12.48" tri‑color e‑paper (B) 패널(1304x984)에 **ICS(iCalendar) 
 - **Web UI**
   - Web UI 를 통해:
     - ICS URL 목록, cron 주기, timezone, 표시 옵션 편집
-    - 설정 저장 후 서비스 재시작 안내
+    - 설정을 YAML과 실행 중 메모리에 저장해 다음 요청/갱신부터 적용
+    - 저장된 ICS URL의 접근 및 파싱 상태 확인
+    - 제목 접두어 기반 휴일 규칙 편집
     - 캘린더와 마지막 생성된 Preview 확인
   - `/preview.png` 로 마지막 렌더링 이미지를 브라우저에서 확인
 
@@ -176,8 +178,23 @@ sudo systemctl enable --now epdcal
 
 `systemd-install`은 `epdcal` 계정과 그룹, 설정 파일, 캐시 디렉터리의
 권한을 맞춘다. 먼저 `make build-pi-cgo`로 바이너리를 생성해야 한다.
-설정 파일이 없으면 샘플을 설치하며, Web UI에서 저장한 설정은
-`sudo systemctl restart epdcal` 후 적용된다.
+설정 파일이 없으면 샘플을 설치한다. Web UI에서 저장한 설정은
+파일과 실행 중 메모리에 함께 반영된다.
+
+Web UI의 `/config`에서 설정을 저장하면 `/etc/epdcal/config.yaml`에 기록된다.
+새 ICS 목록, 휴일 규칙, 인증은 다음 HTTP 요청부터 사용한다. cron 주기와
+타임존은 다음 예약 시각 계산부터 사용한다. 이미 진행 중인 ICS 조회는 이전
+설정을 사용할 수 있지만, 이후 HTTP 요청은 새 설정을 읽는다. HTTP `listen` 주소는 열린 소켓이므로 Web UI에서 수정하지
+않으며, 파일에서 직접 변경했다면 서비스를 재시작해야 한다.
+권한 문제로 저장에 실패하면
+`sudo journalctl -u epdcal -n 100`에서 오류를 확인한다.
+`/config`의 **지금 EPD 갱신**은 현재 실행 중인 설정으로 ICS 조회,
+Chromium 캡처, EPD 출력을 바로 수행한다. 설정을 저장한 뒤 누르면 새 규칙을
+반영할 수 있다.
+수동 요청은 서버에서 5분 쿨다운을 적용하며, 예약/초기 갱신이 실행 중이면
+겹쳐 실행하지 않는다. **Preview 새로고침**은 이미 만들어진 PNG만 다시 불러온다.
+설정 변경과 EPD 제어가 가능한 웹 서버이므로 외부에 공개할 경우
+Basic Auth와 신뢰할 수 있는 네트워크 접근 제한을 함께 사용한다.
 
 ---
 
@@ -195,6 +212,8 @@ highlight_red:
   - "중요"
   - "휴가"
   - "deadline"
+holiday_prefixes:
+  - "쉬는 날"             # 제목이 이 문자열로 시작하면 휴일
 
 ics:
   - id: "personal"
@@ -219,6 +238,9 @@ basic_auth:
 - `show_all_day`: all‑day 섹션 표시 여부
 - `highlight_red`:
   - 이벤트 제목/설명에 포함될 경우 red plane 으로 강조할 키워드 목록
+- `holiday_prefixes`:
+  - 이벤트 제목이 접두어로 시작하면 휴일로 판정해 날짜와 일정을 빨간색으로 표시
+  - 기본값 `쉬는 날`; `[]`로 지정하면 비활성화
 - `ics`:
   - `id`: 내부 식별자
   - `url`: ICS 구독 URL (비공개 URL 포함 가능, **로그에 풀로 찍지 않도록 주의**)
@@ -240,7 +262,11 @@ basic_auth:
   현재 설정 값을 JSON 형태로 반환
 
 - `POST /api/config`  
-  JSON body 를 검증한 뒤 설정 파일에 저장한다. 서비스 재시작 후 적용된다.
+  JSON body 를 검증한 뒤 설정 파일과 실행 중 설정에 반영한다.
+
+- `GET /api/ics/status`:
+  저장된 ICS URL을 서버에서 직접 요청하고 iCalendar 파싱을 검사한다. 캐시된
+  결과로 성공을 보고하지 않는다. URL과 토큰은 응답에 포함하지 않는다.
 
 - `GET /api/events`:
   설정된 ICS 소스에서 읽은 일정 목록을 반환한다.
@@ -422,7 +448,7 @@ I2C 배터리 정보를 제대로 읽으려면 다음이 전제되어야 한다.
 
 PiSugar 3 기본 주소는 `0x57`이며, 앱은 `/dev/i2c-1`에서 직접 배터리 잔량을 읽는다.
 PiSugar 데몬은 사용하지 않는다. 장치, 권한 또는 읽기 오류로 잔량을 알 수 없으면
-캘린더에는 낮은 배터리 아이콘과 `??%`가 표시되고 `/api/battery`는
+홈과 캘린더에는 낮은 배터리 아이콘과 `??%`가 표시되고 `/api/battery`는
 `{"available":false,"percent":null,"voltage_mv":null}`을 반환한다.
 `/api/config`는 설정 파일을 읽고 저장하며, 저장 전 입력을 검증한다.
 

@@ -36,7 +36,9 @@ func TestConfigAPIStoresEditsAndPreservesHiddenFields(t *testing.T) {
 		t.Fatalf("ICS name was lost in GET: %+v", input.ICS[0])
 	}
 	input.Refresh = "0 * * * *"
+	input.WeekStart = "sunday"
 	input.HighlightRedKeywords = []string{"urgent"}
+	input.HolidayPrefixes = []string{"쉬는 날", "Closed:"}
 	input.BasicAuth = editableBasicAuth{Enabled: true, Username: "admin", Password: "secret"}
 	body, err := json.Marshal(input)
 	if err != nil {
@@ -56,12 +58,30 @@ func TestConfigAPIStoresEditsAndPreservesHiddenFields(t *testing.T) {
 	}
 	if saved.RefreshCron != input.Refresh || saved.Rotation != 270 || saved.DefaultLocale != "en" ||
 		len(saved.HighlightRed) != 1 || saved.HighlightRed[0] != "urgent" ||
+		len(saved.HolidayPrefixes) != 2 || saved.HolidayPrefixes[0] != "쉬는 날" ||
 		len(saved.ICS) != 1 || saved.ICS[0].Name != "Home" ||
 		saved.BasicAuth == nil || saved.BasicAuth.Username != "admin" {
 		t.Fatalf("saved config = %+v", saved)
 	}
-	if initial.BasicAuth != nil {
-		t.Fatal("running config changed before restart")
+	if initial.BasicAuth != nil || s.Config().BasicAuth == nil || s.Config().RefreshCron != input.Refresh || s.Config().WeekStart != "sunday" {
+		t.Fatal("active snapshot was not replaced cleanly")
+	}
+	select {
+	case <-s.ConfigChanged():
+	default:
+		t.Fatal("scheduler was not notified")
+	}
+	unauthorized := httptest.NewRecorder()
+	s.Handler().ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("new Basic Auth not active: %d", unauthorized.Code)
+	}
+	authorized := httptest.NewRecorder()
+	authRequest := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	authRequest.SetBasicAuth("admin", "secret")
+	s.Handler().ServeHTTP(authorized, authRequest)
+	if authorized.Code != http.StatusOK {
+		t.Fatalf("new Basic Auth failed: %d", authorized.Code)
 	}
 }
 

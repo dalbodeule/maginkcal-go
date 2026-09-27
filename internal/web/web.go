@@ -9,9 +9,11 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"epdcal/internal/battery"
@@ -22,7 +24,9 @@ import (
 
 // Server provides HTTP APIs for configuration and schedule access.
 type Server struct {
-	cfg        *config.Config
+	current    atomic.Pointer[config.Config]
+	configMu   sync.Mutex
+	changed    chan struct{}
 	configPath string
 	debug      bool
 	mux        *http.ServeMux
@@ -34,8 +38,10 @@ type Server struct {
 
 	// In-memory cache for battery status, including temporary read failures.
 	batteryReader battery.Reader
+	icsClient     *http.Client
 	batteryMu     sync.Mutex
 	batteryCache  *batteryCache
+	refresh       *RefreshManager
 }
 
 // embeddedStatic contains the exported Next.js static build.
@@ -53,52 +59,48 @@ func NewServer(cfg *config.Config, debug bool) *Server {
 		configPath = "./config.yaml"
 	}
 	s := &Server{
-		cfg:           cfg,
 		configPath:    configPath,
 		debug:         debug,
 		mux:           http.NewServeMux(),
 		batteryReader: battery.DefaultReader(),
+		icsClient:     &http.Client{Timeout: 10 * time.Second},
+		changed:       make(chan struct{}, 1),
 	}
+	s.current.Store(cfg)
 	s.registerRoutes()
 	return s
 }
 
+// Config returns an immutable snapshot of the settings currently in use.
+func (s *Server) Config() *config.Config { return s.current.Load() }
+
+func (s *Server) ConfigChanged() <-chan struct{} { return s.changed }
+
+func (s *Server) SetConfigPath(path string) { s.configPath = path }
+
+func (s *Server) SetRefreshManager(manager *RefreshManager) { s.refresh = manager }
+
 // Handler returns the underlying http.Handler for this server.
 func (s *Server) Handler() http.Handler {
-	h := http.Handler(s.mux)
-	if s.basicAuthEnabled() {
-		appLog.Info("HTTP basic auth enabled", "listen", "http://"+s.cfg.Listen)
-		return s.basicAuthMiddleware(h)
-	}
-	return h
-}
-
-// basicAuthEnabled reports whether HTTP Basic Auth is configured.
-func (s *Server) basicAuthEnabled() bool {
-	if s.cfg == nil || s.cfg.BasicAuth == nil {
-		return false
-	}
-	// 빈 사용자명 또는 비밀번호가 설정된 경우에는 비활성화로 취급한다.
-	if s.cfg.BasicAuth.Username == "" || s.cfg.BasicAuth.Password == "" {
-		return false
-	}
-	return true
+	return s.basicAuthMiddleware(s.mux)
 }
 
 // basicAuthMiddleware wraps all handlers except /health with HTTP Basic Auth.
 func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
-	username := s.cfg.BasicAuth.Username
-	password := s.cfg.BasicAuth.Password
-
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// /health 는 항상 무인증으로 노출한다.
 		if r.URL.Path == "/health" {
 			next.ServeHTTP(w, r)
 			return
 		}
+		cfg := s.Config()
+		if cfg == nil || cfg.BasicAuth == nil || cfg.BasicAuth.Username == "" || cfg.BasicAuth.Password == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
 
 		u, p, ok := r.BasicAuth()
-		if !ok || !secureCompare(u, username) || !secureCompare(p, password) {
+		if !ok || !secureCompare(u, cfg.BasicAuth.Username) || !secureCompare(p, cfg.BasicAuth.Password) {
 			w.Header().Set("WWW-Authenticate", `Basic realm="EPDCal", charset="UTF-8"`)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
@@ -117,16 +119,14 @@ func secureCompare(a, b string) bool {
 
 // StartServer binds the listener before returning so the first capture can
 // safely request the calendar page immediately.
-func StartServer(ctx context.Context, cfg *config.Config, debug bool, configPath string) (<-chan error, error) {
-	s := NewServer(cfg, debug)
-	s.configPath = configPath
-	listener, err := net.Listen("tcp", cfg.Listen)
+func StartServer(ctx context.Context, s *Server) (<-chan error, error) {
+	listener, err := net.Listen("tcp", s.Config().Listen)
 	if err != nil {
 		return nil, err
 	}
 	server := &http.Server{Handler: s.Handler()}
 	serverErrors := make(chan error, 1)
-	appLog.Info("starting HTTP server", "listen", "http://"+cfg.Listen, "debug", debug)
+	appLog.Info("starting HTTP server", "listen", "http://"+s.Config().Listen, "debug", s.debug)
 	go func() {
 		err := server.Serve(listener)
 		if errors.Is(err, http.ErrServerClosed) {
@@ -150,6 +150,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/events", s.handleEvents)
 	s.mux.HandleFunc("/api/battery", s.handleBattery)
 	s.mux.HandleFunc("/api/config", s.handleConfig)
+	s.mux.HandleFunc("/api/ics/status", s.handleICSStatus)
+	s.mux.HandleFunc("/api/refresh", s.handleRefresh)
 	s.mux.HandleFunc("/app-config.js", s.handleAppConfigJS)
 	s.mux.HandleFunc("/preview.png", s.handlePreview)
 
@@ -157,10 +159,12 @@ func (s *Server) registerRoutes() {
 	// All non-/api/* and non-/preview.png paths fall back to this handler.
 	s.mux.Handle("/", s.staticFileServer())
 
-	// 추후:
-	// - /api/refresh
-	// - /api/render
-	// - 정적 파일 서빙(Next.js export 결과) 등을 여기에 추가 예정.
+}
+
+func (s *Server) InvalidateEventsCache() {
+	s.eventsMu.Lock()
+	s.eventsCache = nil
+	s.eventsMu.Unlock()
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -215,8 +219,8 @@ func (s *Server) handleAppConfigJS(w http.ResponseWriter, _ *http.Request) {
 	runtimeCfg := browserRuntimeConfig{
 		DefaultLocale: "ko",
 	}
-	if s.cfg != nil && s.cfg.DefaultLocale != "" {
-		runtimeCfg.DefaultLocale = s.cfg.DefaultLocale
+	if cfg := s.Config(); cfg != nil && cfg.DefaultLocale != "" {
+		runtimeCfg.DefaultLocale = cfg.DefaultLocale
 	}
 
 	payload, err := json.Marshal(runtimeCfg)
@@ -286,6 +290,7 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 // eventsResponse is the JSON response shape for /api/events.
 type eventsResponse struct {
 	Occurrences     []occurrenceDTO `json:"occurrences"`
+	HolidayDates    []string        `json:"holiday_dates"`
 	TruncatedUIDs   []string        `json:"truncated_uids,omitempty"`
 	RangeStart      time.Time       `json:"range_start"`
 	RangeEnd        time.Time       `json:"range_end"`
@@ -296,6 +301,7 @@ type eventsResponse struct {
 // eventsCache holds a cached /api/events response and its timestamp.
 type eventsCache struct {
 	key       string
+	config    *config.Config
 	resp      eventsResponse
 	updatedAt time.Time
 }
@@ -323,6 +329,7 @@ type occurrenceDTO struct {
 	Location     string    `json:"location"`
 	AllDay       bool      `json:"all_day"`
 	HighlightRed bool      `json:"highlight_red"`
+	Holiday      bool      `json:"holiday"`
 	Start        time.Time `json:"start"`
 	End          time.Time `json:"end"`
 }
@@ -337,6 +344,7 @@ type occurrenceDTO struct {
 // 디스플레이 타임존은 config.Timezone 기준이며, 잘못된 Timezone 이면 time.Local 을 사용한다.
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	cfg := s.Config()
 
 	// Parse query parameters.
 	q := r.URL.Query()
@@ -354,7 +362,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Display timezone.
-	loc := resolveLocationOrLocal(s.cfg.Timezone)
+	loc := resolveLocationOrLocal(cfg.Timezone)
 
 	// Small in-memory cache for expanded events. This avoids repeating
 	// ICS fetch/parse/expand work on every HTTP request. The cache is
@@ -366,7 +374,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	s.eventsMu.RLock()
 	ec := s.eventsCache
 	s.eventsMu.RUnlock()
-	if ec != nil && ec.key == cacheKey && cacheNow.Sub(ec.updatedAt) < eventsCacheTTL {
+	if ec != nil && ec.key == cacheKey && ec.config == cfg && cacheNow.Sub(ec.updatedAt) < eventsCacheTTL {
 		writeJSON(w, http.StatusOK, ec.resp)
 		return
 	}
@@ -376,7 +384,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	var rangeStart, rangeEnd time.Time
 	if rawDays == "" && rawBackfill == "" {
 		// 기본값: 이번 주 시작(week_start 설정에 따라 일/월)을 기준으로 35일 범위.
-		rangeStart = startOfWeek(now, loc, s.cfg.WeekStart)
+		rangeStart = startOfWeek(now, loc, cfg.WeekStart)
 		rangeEnd = rangeStart.AddDate(0, 0, 35)
 
 		// 로깅 편의를 위해 days/backfill 를 재계산한 개념값으로 덮어쓴다.
@@ -400,12 +408,12 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		"backfill", backfill,
 		"range_start", rangeStart.Format(time.RFC3339),
 		"range_end", rangeEnd.Format(time.RFC3339),
-		"timezone", s.cfg.Timezone,
+		"timezone", cfg.Timezone,
 	)
 
 	// Build ICS sources from config.
-	sources := make([]ics.Source, 0, len(s.cfg.ICS))
-	for _, csrc := range s.cfg.ICS {
+	sources := make([]ics.Source, 0, len(cfg.ICS))
+	for _, csrc := range cfg.ICS {
 		if csrc.URL == "" {
 			continue
 		}
@@ -430,7 +438,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			RangeStart:      rangeStart,
 			RangeEnd:        rangeEnd,
 			DisplayTimeZone: loc.String(),
-			WeekStart:       s.cfg.WeekStart,
+			WeekStart:       cfg.WeekStart,
 		})
 		return
 	}
@@ -476,10 +484,32 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Convert to DTO.
-	dtos := make([]occurrenceDTO, 0, len(expandResult.Occurrences))
-	for _, occ := range expandResult.Occurrences {
-		if occ.AllDay && !s.cfg.ShowAllDay {
+	resp := buildEventsResponse(cfg, expandResult, loc, rangeStart, rangeEnd)
+
+	// Update in-memory cache for subsequent requests.
+	s.eventsMu.Lock()
+	s.eventsCache = &eventsCache{
+		key:       cacheKey,
+		config:    cfg,
+		resp:      resp,
+		updatedAt: time.Now(),
+	}
+	s.eventsMu.Unlock()
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func buildEventsResponse(cfg *config.Config, expanded ics.ExpandResult, loc *time.Location, rangeStart, rangeEnd time.Time) eventsResponse {
+	dtos := make([]occurrenceDTO, 0, len(expanded.Occurrences))
+	holidayDates := make(map[string]struct{})
+	for _, occ := range expanded.Occurrences {
+		holiday := isHoliday(occ.Summary, cfg.HolidayPrefixes)
+		if holiday {
+			for _, key := range holidayDateKeys(occ.Start, occ.End, loc, rangeStart, rangeEnd) {
+				holidayDates[key] = struct{}{}
+			}
+		}
+		if occ.AllDay && !cfg.ShowAllDay {
 			continue
 		}
 		dtos = append(dtos, occurrenceDTO{
@@ -490,31 +520,27 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			Description:  occ.Description,
 			Location:     occ.Location,
 			AllDay:       occ.AllDay,
-			HighlightRed: shouldHighlightRed(occ.Summary, occ.Description, s.cfg.HighlightRed),
+			HighlightRed: holiday || shouldHighlightRed(occ.Summary, occ.Description, cfg.HighlightRed),
+			Holiday:      holiday,
 			Start:        occ.Start,
 			End:          occ.End,
 		})
 	}
+	dates := make([]string, 0, len(holidayDates))
+	for key := range holidayDates {
+		dates = append(dates, key)
+	}
+	sort.Strings(dates)
 
-	resp := eventsResponse{
+	return eventsResponse{
 		Occurrences:     dtos,
-		TruncatedUIDs:   expandResult.TruncatedEvents,
+		HolidayDates:    dates,
+		TruncatedUIDs:   expanded.TruncatedEvents,
 		RangeStart:      rangeStart,
 		RangeEnd:        rangeEnd,
 		DisplayTimeZone: loc.String(),
-		WeekStart:       s.cfg.WeekStart,
+		WeekStart:       cfg.WeekStart,
 	}
-
-	// Update in-memory cache for subsequent requests.
-	s.eventsMu.Lock()
-	s.eventsCache = &eventsCache{
-		key:       cacheKey,
-		resp:      resp,
-		updatedAt: time.Now(),
-	}
-	s.eventsMu.Unlock()
-
-	writeJSON(w, http.StatusOK, resp)
 }
 
 func shouldHighlightRed(summary, description string, keywords []string) bool {
@@ -526,6 +552,37 @@ func shouldHighlightRed(summary, description string, keywords []string) bool {
 		}
 	}
 	return false
+}
+
+func isHoliday(summary string, prefixes []string) bool {
+	summary = strings.TrimSpace(summary)
+	for _, prefix := range prefixes {
+		prefix = strings.TrimSpace(prefix)
+		if prefix != "" && strings.HasPrefix(summary, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func holidayDateKeys(start, end time.Time, loc *time.Location, rangeStart, rangeEnd time.Time) []string {
+	start = start.In(loc)
+	end = end.In(loc)
+	if !end.After(start) {
+		end = start.Add(time.Nanosecond)
+	}
+	day := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, loc)
+	firstRangeDay := rangeStart.In(loc)
+	firstRangeDay = time.Date(firstRangeDay.Year(), firstRangeDay.Month(), firstRangeDay.Day(), 0, 0, 0, 0, loc)
+	if day.Before(firstRangeDay) {
+		day = firstRangeDay
+	}
+	keys := make([]string, 0, 1)
+	for count := 0; day.Before(rangeEnd) && day.Before(end) && count < 366; count++ {
+		keys = append(keys, day.Format("2006-01-02"))
+		day = day.AddDate(0, 0, 1)
+	}
+	return keys
 }
 
 func parseIntDefault(s string, def int) int {

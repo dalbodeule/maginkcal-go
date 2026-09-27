@@ -29,6 +29,7 @@ type editableConfig struct {
 	HorizonDays          int                `json:"horizon_days"`
 	ShowAllDay           bool               `json:"show_all_day"`
 	HighlightRedKeywords []string           `json:"highlight_red_keywords"`
+	HolidayPrefixes      []string           `json:"holiday_prefixes"`
 	WeekStart            string             `json:"week_start"`
 	ICS                  []config.ICSConfig `json:"ics"`
 	BasicAuth            editableBasicAuth  `json:"basic_auth"`
@@ -42,6 +43,7 @@ func editableFromConfig(cfg *config.Config) editableConfig {
 		HorizonDays:          cfg.HorizonDays,
 		ShowAllDay:           cfg.ShowAllDay,
 		HighlightRedKeywords: cfg.HighlightRed,
+		HolidayPrefixes:      cfg.HolidayPrefixes,
 		WeekStart:            cfg.WeekStart,
 		ICS:                  cfg.ICS,
 	}
@@ -75,6 +77,8 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) saveConfig(w http.ResponseWriter, r *http.Request) {
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" {
 		writeError(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
@@ -108,6 +112,7 @@ func (s *Server) saveConfig(w http.ResponseWriter, r *http.Request) {
 	cfg.HorizonDays = input.HorizonDays
 	cfg.ShowAllDay = input.ShowAllDay
 	cfg.HighlightRed = input.HighlightRedKeywords
+	cfg.HolidayPrefixes = input.HolidayPrefixes
 	cfg.WeekStart = input.WeekStart
 	cfg.ICS = input.ICS
 	if input.BasicAuth.Enabled {
@@ -122,6 +127,17 @@ func (s *Server) saveConfig(w http.ResponseWriter, r *http.Request) {
 		appLog.Error("failed to save config from API", err)
 		writeError(w, http.StatusInternalServerError, "failed to save config")
 		return
+	}
+	runtimeCfg := *cfg
+	if active := s.Config(); active != nil {
+		// An explicit --listen override remains authoritative until restart.
+		runtimeCfg.Listen = active.Listen
+	}
+	s.current.Store(&runtimeCfg)
+	s.InvalidateEventsCache()
+	select {
+	case s.changed <- struct{}{}:
+	default:
 	}
 	writeJSON(w, http.StatusOK, editableFromConfig(cfg))
 }
@@ -138,6 +154,14 @@ func validateEditableConfig(input editableConfig) error {
 	}
 	if input.WeekStart != "monday" && input.WeekStart != "sunday" {
 		return errors.New("week_start must be monday or sunday")
+	}
+	if len(input.HolidayPrefixes) > 32 {
+		return errors.New("too many holiday prefixes")
+	}
+	for _, prefix := range input.HolidayPrefixes {
+		if strings.TrimSpace(prefix) == "" || len(prefix) > 128 {
+			return errors.New("holiday prefixes must be nonempty and at most 128 bytes")
+		}
 	}
 	ids := make(map[string]bool, len(input.ICS))
 	for _, source := range input.ICS {

@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import nanumGothic from "./fonts/nanum";
 import { I18nProvider, useI18n } from "@/app/core/i18n";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faBatteryEmpty, faBatteryFull, faBatteryHalf, faBatteryQuarter, faBatteryThreeQuarters } from "@fortawesome/free-solid-svg-icons";
 
 type HealthStatus = "idle" | "ok" | "error";
 
@@ -11,6 +13,27 @@ function HomeContent() {
   const [healthStatus, setHealthStatus] = useState<HealthStatus>("idle");
   const [healthMessage, setHealthMessage] = useState<string>("");
   const [checking, setChecking] = useState(false);
+  const [batteryPercent, setBatteryPercent] = useState<number | null>(null);
+  const batteryIcon = batteryPercent == null || batteryPercent < 40
+    ? batteryPercent != null && batteryPercent < 20 ? faBatteryEmpty : faBatteryQuarter
+    : batteryPercent < 60 ? faBatteryHalf
+    : batteryPercent < 80 ? faBatteryThreeQuarters : faBatteryFull;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 5000);
+    void fetch("/api/battery", { signal: controller.signal, cache: "no-store" })
+      .then((res) => res.json())
+      .then((status: { available?: boolean; percent?: number | null }) => {
+        if (status.available && typeof status.percent === "number" &&
+            Number.isInteger(status.percent) && status.percent >= 0 && status.percent <= 100) {
+          setBatteryPercent(status.percent);
+        }
+      })
+      .catch(() => {})
+      .finally(() => window.clearTimeout(timeout));
+    return () => { controller.abort(); window.clearTimeout(timeout); };
+  }, []);
 
   const checkHealth = useCallback(async () => {
     try {
@@ -47,27 +70,31 @@ function HomeContent() {
       className={`${nanumGothic.className} min-h-screen bg-slate-100 text-slate-900 flex items-center justify-center px-4`}
     >
       <main className="w-full max-w-3xl rounded-xl bg-white shadow-sm px-6 py-7 sm:px-8 sm:py-8 border border-slate-200">
-        <header className="mb-6 border-b border-slate-200 pb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <header className="mb-6 border-b border-slate-200 pb-4 flex flex-col gap-3 [word-break:keep-all]">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
-              {t("home.title")}
-            </h1>
+            <div className="flex items-center justify-between gap-3">
+              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">{t("home.title")}</h1>
+              <span className="inline-flex shrink-0 items-center gap-1 text-sm font-semibold text-slate-700" aria-label={`Battery ${batteryPercent == null ? "unknown" : `${batteryPercent}%`}`}>
+                <FontAwesomeIcon icon={batteryIcon} />
+                {batteryPercent == null ? "??%" : `${batteryPercent}%`}
+              </span>
+            </div>
             <p className="mt-1 text-[11px] sm:text-xs text-slate-500">
               {t("home.subtitle")}
             </p>
           </div>
-          <div className="flex items-center gap-2 text-[11px] sm:text-xs">
-            <span className="text-slate-500">{t("home.quick_links")}</span>
-            <div className="inline-flex rounded-full border border-slate-300 bg-slate-100 p-0.5">
+          <div className="flex flex-wrap items-center gap-2 text-[11px] sm:text-xs">
+            <span className="whitespace-nowrap text-slate-500">{t("home.quick_links")}</span>
+            <div className="inline-flex shrink-0 rounded-full border border-slate-300 bg-slate-100 p-0.5">
               <a
                 href="/calendar"
-                className="px-3 py-1 rounded-full text-slate-700 hover:bg-slate-200"
+                className="px-3 py-1 rounded-full whitespace-nowrap text-slate-700 hover:bg-slate-200"
               >
                 {t("common.goto.calendar")}
               </a>
               <a
                 href="/config"
-                className="px-3 py-1 rounded-full bg-slate-900 text-white hover:bg-slate-800"
+                className="px-3 py-1 rounded-full whitespace-nowrap bg-slate-900 text-white hover:bg-slate-800"
               >
                 {t("common.goto.config")}
               </a>

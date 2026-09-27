@@ -81,9 +81,21 @@ const ko: Messages = {
   "config.ics.id": "ID",
   "config.ics.url": "URL",
   "config.ics.delete": "삭제",
+  "config.ics.check": "저장된 ICS 접근 확인",
+  "config.ics.checking": "ICS 확인 중...",
+  "config.ics.check_hint": "변경한 URL은 저장한 뒤 검사할 수 있습니다.",
+  "config.ics.status.ok": "접근 및 파싱 성공",
+  "config.ics.status.http_error": "HTTP 오류",
+  "config.ics.status.network_error": "네트워크 오류",
+  "config.ics.status.invalid_ics": "iCalendar 파싱 실패",
+  "config.ics.status.too_large": "파일 크기 초과 (10 MB)",
+  "config.ics.events": "개 일정",
   "config.highlight.section_title": "표시 옵션 / 보안",
   "config.highlight.label":
     "Red highlight keywords (쉼표 또는 줄바꿈으로 구분)",
+  "config.holiday_prefixes.label": "휴일 제목 접두어 (쉼표 또는 줄바꿈으로 구분)",
+  "config.holiday_prefixes.placeholder": "쉬는 날",
+  "config.holiday_prefixes.hint": "예: '쉬는 날'로 시작하는 일정은 휴일로 판정해 날짜와 일정을 빨간색으로 표시합니다. 비워두면 규칙을 끕니다.",
   "config.basic_auth.enable":
     "Basic Auth 활성화 (백엔드에서 /health 를 제외한 모든 엔드포인트 보호)",
   "config.basic_auth.username": "Username",
@@ -93,14 +105,19 @@ const ko: Messages = {
   "config.loading": "설정을 불러오는 중입니다...",
   "config.load_error": "설정을 불러오는 중 오류가 발생했습니다.",
   "config.save_error": "설정을 저장하는 중 오류가 발생했습니다.",
-  "config.save_ok": "설정이 저장되었습니다. 서비스를 재시작하면 적용됩니다.",
+  "config.save_ok": "설정 파일과 실행 중 설정에 저장했습니다. 다음 조회/갱신부터 사용합니다. 인증을 바꿨다면 페이지를 새로고침하세요.",
+  "config.refresh_now": "지금 EPD 갱신",
+  "config.refresh_running": "갱신 중입니다. 캡처와 EPD 출력이 끝나면 Preview가 갱신됩니다.",
+  "config.refresh_cooldown": "다음 수동 갱신까지",
+  "config.refresh_ready": "수동 갱신 가능",
+  "config.refresh_hint": "수동 갱신은 5분 쿨다운이 적용됩니다. 저장한 설정은 다음 갱신부터 사용합니다.",
   "config.preview.refresh": "Preview 새로고침",
   "config.preview.hint":
     "최신 캡처 결과를 확인하려면 \"Preview 새로고침\" 버튼을 누르거나 브라우저 캐시를 무시하고 다시 불러오십시오. 이 이미지는 Go 서버의 /preview.png 엔드포인트에서 제공됩니다.",
   "config.preview.aspect_hint":
     "1304 × 984 EPD 비율에 가깝게 표시됩니다.",
   "config.empty_config":
-    "설정 정보가 아직 없습니다. 백엔드 /api/config 구현 후 이 화면에서 수정할 수 있습니다.",
+    "설정을 불러오지 못했습니다. API와 서비스 로그를 확인해 주세요.",
 
   // 추가: 홈/헬스체크, 캘린더, 설정 관련 보조 문구
   "home.health.request_failed": "요청 실패",
@@ -173,9 +190,21 @@ const en: Messages = {
   "config.ics.id": "ID",
   "config.ics.url": "URL",
   "config.ics.delete": "Delete",
+  "config.ics.check": "Check saved ICS access",
+  "config.ics.checking": "Checking ICS...",
+  "config.ics.check_hint": "Save URL changes before checking.",
+  "config.ics.status.ok": "Reachable and parsed",
+  "config.ics.status.http_error": "HTTP error",
+  "config.ics.status.network_error": "Network error",
+  "config.ics.status.invalid_ics": "Invalid iCalendar",
+  "config.ics.status.too_large": "File exceeds 10 MB",
+  "config.ics.events": "events",
   "config.highlight.section_title": "Display options / Security",
   "config.highlight.label":
     "Red highlight keywords (separated by comma or newline)",
+  "config.holiday_prefixes.label": "Holiday title prefixes (comma or newline separated)",
+  "config.holiday_prefixes.placeholder": "쉬는 날",
+  "config.holiday_prefixes.hint": "Events whose titles start with a prefix are holidays; their dates and text are red. Leave empty to disable.",
   "config.basic_auth.enable":
     "Enable Basic Auth (protect all endpoints except /health on the backend)",
   "config.basic_auth.username": "Username",
@@ -185,14 +214,19 @@ const en: Messages = {
   "config.loading": "Loading settings...",
   "config.load_error": "Failed to load settings.",
   "config.save_error": "Failed to save settings.",
-  "config.save_ok": "Settings saved. Restart the service to apply them.",
+  "config.save_ok": "Saved to config.yaml and active memory. New requests/refreshes use these settings. Reload if you changed authentication.",
+  "config.refresh_now": "Refresh EPD now",
+  "config.refresh_running": "Refreshing. Preview updates after capture and display finish.",
+  "config.refresh_cooldown": "Next manual refresh in",
+  "config.refresh_ready": "Manual refresh available",
+  "config.refresh_hint": "Manual refresh has a 5-minute cooldown. Saved settings apply on the next refresh.",
   "config.preview.refresh": "Refresh preview",
   "config.preview.hint":
     "To see the latest capture, click \"Refresh preview\" or reload ignoring browser cache. This image is served from the Go server's /preview.png endpoint.",
   "config.preview.aspect_hint":
     "Displayed with an aspect ratio close to 1304 × 984 for the EPD.",
   "config.empty_config":
-    "Settings are not yet available. Once the backend /api/config is implemented, you can edit them here.",
+    "Could not load settings. Check the API and service logs.",
 
   // Extra: home/health check, calendar, config helper messages
   "home.health.request_failed": "Request failed",

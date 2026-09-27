@@ -70,6 +70,10 @@ type Config struct {
 	// HighlightRed is a list of keywords that cause events to be rendered in red.
 	HighlightRed []string `yaml:"highlight_red" json:"highlight_red"`
 
+	// HolidayPrefixes marks an event as a holiday when its title starts with one.
+	// An empty list disables the rule; omitted values use the default.
+	HolidayPrefixes []string `yaml:"holiday_prefixes" json:"holiday_prefixes"`
+
 	// ICS is the list of subscribed ICS sources.
 	ICS []ICSConfig `yaml:"ics" json:"ics"`
 
@@ -89,11 +93,12 @@ func DefaultConfig() *Config {
 		RefreshCron:   "*/15 * * * *",
 		// Keep a sensible default for legacy minutes as well, but the
 		// application should primarily use RefreshCron.
-		HorizonDays:  7,
-		ShowAllDay:   true,
-		HighlightRed: []string{"휴일", "휴가", "중요"},
-		ICS:          []ICSConfig{},
-		BasicAuth:    nil,
+		HorizonDays:     7,
+		ShowAllDay:      true,
+		HighlightRed:    []string{"휴일", "휴가", "중요"},
+		HolidayPrefixes: []string{"쉬는 날"},
+		ICS:             []ICSConfig{},
+		BasicAuth:       nil,
 	}
 }
 
@@ -158,6 +163,9 @@ func (c *Config) Normalize() {
 	// Only treat unset if HighlightRed is nil and we want to ensure a base list.
 	if c.HighlightRed == nil {
 		c.HighlightRed = []string{"휴일", "휴가", "중요"}
+	}
+	if c.HolidayPrefixes == nil {
+		c.HolidayPrefixes = []string{"쉬는 날"}
 	}
 	if c.ICS == nil {
 		c.ICS = []ICSConfig{}

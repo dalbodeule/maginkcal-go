@@ -78,19 +78,6 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Bind the HTTP listener before the initial capture can start.
-	serverErrors, err := web.StartServer(ctx, conf, flags.debug, flags.configPath)
-	if err != nil {
-		appLog.Error("failed to start HTTP server", err)
-		os.Exit(1)
-	}
-	go func() {
-		if err := <-serverErrors; err != nil {
-			appLog.Error("http server failed", err)
-			cancel()
-		}
-	}()
-
 	// Signal handling.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -120,88 +107,95 @@ func main() {
 		}()
 	}
 
+	server := web.NewServer(conf, flags.debug)
+	server.SetConfigPath(flags.configPath)
+	refresh := web.NewRefreshManager(ctx, func(ctx context.Context) error {
+		active := server.Config()
+		if err := runRefreshCycle(ctx, active, flags.debug); err != nil {
+			return err
+		}
+		server.InvalidateEventsCache()
+		return runCapturePipeline(ctx, active, flags, epdDrv)
+	})
+	defer refresh.WaitIdle()
+	server.SetRefreshManager(refresh)
+	// Bind before Chromium requests /calendar during the initial capture.
+	serverErrors, err := web.StartServer(ctx, server)
+	if err != nil {
+		appLog.Error("failed to start HTTP server", err)
+		os.Exit(1)
+	}
+	go func() {
+		if err := <-serverErrors; err != nil {
+			appLog.Error("http server failed", err)
+			cancel()
+		}
+	}()
+
 	// Scheduler / single-run behavior.
 	if flags.once {
 		appLog.Info("running in once mode (single refresh cycle)")
-		if err := runRefreshCycle(ctx, conf, flags.debug); err != nil {
-			appLog.Error("refresh cycle failed in once mode", err)
-			os.Exit(1)
-		}
-
-		// 파이프라인의 일부로 /calendar 페이지를 Chromium으로 캡처해서
-		// preview.png를 생성하고, PNG → packed plane 변환 후 EPD에 출력한다.
-		// once 모드에서는 캡처/디스플레이 실패 시 프로세스를 종료하여
-		// 문제를 빠르게 드러내도록 한다.
-		if err := runCapturePipeline(ctx, conf, flags, epdDrv); err != nil {
-			appLog.Error("capture/display pipeline failed in once mode", err)
+		if _, err := refresh.RunScheduled(ctx); err != nil {
+			appLog.Error("refresh/capture failed in once mode", err)
 			os.Exit(1)
 		}
 
 		appLog.Info("once mode completed; exiting")
+		cancel()
 		return
 	}
 
 	appLog.Info("starting periodic refresh loop (cron)",
-		"refresh_cron", conf.RefreshCron,
+		"refresh_cron", server.Config().RefreshCron,
 	)
 
 	// Initial immediate run.
-	if err := runRefreshCycle(ctx, conf, flags.debug); err != nil {
-		appLog.Error("initial refresh cycle failed", err)
-	} else {
-		// 주기 루프에서도 매 refresh 이후에 /calendar를 Chromium으로 캡처하여
-		// preview.png를 최신 상태로 유지한다. 캡처 실패는 치명적이지 않으므로
-		// 에러만 로그에 남기고 루프는 계속 돈다.
-		if err := runCapturePipeline(ctx, conf, flags, epdDrv); err != nil {
-			appLog.Error("chromium capture/display failed after initial refresh", err)
-		}
+	if _, err := refresh.RunScheduled(ctx); err != nil {
+		appLog.Error("initial refresh/capture failed", err)
 	}
 
-	// Use a cron-style scheduler for periodic refresh instead of a fixed ticker.
-	// This allows true "wall-clock aligned" schedules (e.g. */15 * * * *) and
-	// more complex patterns in the future.
-	loc, err := time.LoadLocation(conf.Timezone)
-	if err != nil {
-		appLog.Error("failed to load timezone, falling back to local", err, "timezone", conf.Timezone)
-		loc = time.Local
-	}
-
-	c := cron.New(cron.WithLocation(loc))
-
-	_, err = c.AddFunc(conf.RefreshCron, func() {
-		select {
-		case <-ctx.Done():
-			// Context canceled; do not start new work.
-			return
-		default:
-		}
-
-		now := time.Now().In(loc)
-		appLog.Info("scheduled refresh tick (cron)", "time", now.Format(time.RFC3339))
-
-		if err := runRefreshCycle(ctx, conf, flags.debug); err != nil {
-			appLog.Error("scheduled refresh cycle failed", err)
-			return
-		}
-		if err := runCapturePipeline(ctx, conf, flags, epdDrv); err != nil {
-			appLog.Error("chromium capture/display failed after scheduled refresh", err)
-		}
-	})
-	if err != nil {
-		appLog.Error("failed to add cron schedule", err, "refresh_cron", conf.RefreshCron)
+	if err := runScheduler(ctx, server, refresh); err != nil {
+		appLog.Error("scheduler failed", err)
 		os.Exit(1)
 	}
-
-	c.Start()
-	defer c.Stop()
-
-	// Block until context is canceled (SIGINT/SIGTERM).
-	<-ctx.Done()
 	appLog.Info("context canceled; stopping cron scheduler")
 	// Small delay for any future cleanup hooks (EPD sleep, etc.).
 	time.Sleep(100 * time.Millisecond)
 	appLog.Info("epdcal exiting")
 	return
+}
+
+func runScheduler(ctx context.Context, server *web.Server, refresh *web.RefreshManager) error {
+	for ctx.Err() == nil {
+		cfg := server.Config()
+		schedule, err := cron.ParseStandard(cfg.RefreshCron)
+		if err != nil {
+			return err
+		}
+		loc, err := time.LoadLocation(cfg.Timezone)
+		if err != nil {
+			appLog.Error("failed to load timezone, falling back to local", err, "timezone", cfg.Timezone)
+			loc = time.Local
+		}
+		next := schedule.Next(time.Now().In(loc))
+		timer := time.NewTimer(time.Until(next))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil
+		case <-server.ConfigChanged():
+			timer.Stop()
+			continue
+		case <-timer.C:
+			appLog.Info("scheduled refresh tick (cron)", "time", next.Format(time.RFC3339))
+			if started, err := refresh.RunScheduled(ctx); !started {
+				appLog.Info("scheduled refresh skipped; pipeline busy")
+			} else if err != nil {
+				appLog.Error("scheduled refresh/capture failed", err)
+			}
+		}
+	}
+	return nil
 }
 
 func parseFlags() flagConfig {

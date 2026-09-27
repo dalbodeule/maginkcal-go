@@ -21,6 +21,11 @@ highlight_red:
   - "휴가"
   - "중요"
 
+# An event is a holiday when its title starts with one of these prefixes.
+# Use [] to disable the rule.
+holiday_prefixes:
+  - "쉬는 날"
+
 # Optional Basic Auth for Web UI/API (all endpoints except /health).
 # basic_auth:
 #   username: "admin"
