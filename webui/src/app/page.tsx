@@ -67,14 +67,15 @@ function HomeContent() {
 
   return (
     <div
-      className={`${nanumGothic.className} min-h-screen bg-slate-100 text-slate-900 flex items-center justify-center px-4`}
+      className={`${nanumGothic.className} min-h-screen bg-[#eef2f1] text-slate-900 flex items-center justify-center px-3 py-6 sm:px-6`}
     >
-      <main className="w-full max-w-3xl rounded-xl bg-white shadow-sm px-6 py-7 sm:px-8 sm:py-8 border border-slate-200">
-        <header className="mb-6 border-b border-slate-200 pb-4 flex flex-col gap-3 [word-break:keep-all]">
+      <main className="w-full max-w-4xl rounded-[1.5rem] border border-slate-200/80 bg-[#fbfcfb] px-5 py-6 shadow-[0_18px_50px_rgba(15,23,42,0.08)] sm:px-9 sm:py-9">
+        <header className="mb-8 flex flex-col gap-4 border-b border-slate-200 pb-6 [word-break:keep-all]">
           <div>
+            <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700">EPD CONTROL CENTER</p>
             <div className="flex items-center justify-between gap-3">
-              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">{t("home.title")}</h1>
-              <span className="inline-flex shrink-0 items-center gap-1 text-sm font-semibold text-slate-700" aria-label={`Battery ${batteryPercent == null ? "unknown" : `${batteryPercent}%`}`}>
+              <h1 className="text-3xl font-bold tracking-tight text-slate-950 sm:text-4xl">{t("home.title")}</h1>
+              <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-bold text-slate-700 shadow-sm" aria-label={`Battery ${batteryPercent == null ? "unknown" : `${batteryPercent}%`}`}>
                 <FontAwesomeIcon icon={batteryIcon} />
                 {batteryPercent == null ? "??%" : `${batteryPercent}%`}
               </span>
@@ -83,18 +84,18 @@ function HomeContent() {
               {t("home.subtitle")}
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2 text-[11px] sm:text-xs">
-            <span className="whitespace-nowrap text-slate-500">{t("home.quick_links")}</span>
-            <div className="inline-flex shrink-0 rounded-full border border-slate-300 bg-slate-100 p-0.5">
+          <div className="flex flex-wrap items-center gap-3 text-xs">
+            <span className="whitespace-nowrap text-[11px] font-semibold text-slate-400">{t("home.quick_links")}</span>
+            <div className="inline-flex shrink-0 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
               <a
                 href="/calendar"
-                className="px-3 py-1 rounded-full whitespace-nowrap text-slate-700 hover:bg-slate-200"
+                className="rounded-lg px-3 py-1.5 whitespace-nowrap text-slate-600 transition hover:bg-slate-100"
               >
                 {t("common.goto.calendar")}
               </a>
               <a
                 href="/config"
-                className="px-3 py-1 rounded-full whitespace-nowrap bg-slate-900 text-white hover:bg-slate-800"
+                className="rounded-lg bg-slate-900 px-3 py-1.5 whitespace-nowrap text-white shadow-sm transition hover:bg-slate-800"
               >
                 {t("common.goto.config")}
               </a>
@@ -102,9 +103,9 @@ function HomeContent() {
           </div>
         </header>
 
-        <section className="grid grid-cols-1 md:grid-cols-2 gap-5 text-[11px] sm:text-xs text-slate-700">
-          <div className="space-y-2">
-            <h2 className="text-sm sm:text-base font-semibold text-slate-900">
+        <section className="grid grid-cols-1 gap-4 text-xs text-slate-700 md:grid-cols-2">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-3">
+            <h2 className="text-base font-bold text-slate-950">
               {t("home.section.howto")}
             </h2>
             <ol className="list-decimal list-inside space-y-1">
@@ -115,8 +116,8 @@ function HomeContent() {
             </ol>
           </div>
 
-          <div className="space-y-2">
-            <h2 className="text-sm sm:text-base font-semibold text-slate-900">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-3">
+            <h2 className="text-base font-bold text-slate-950">
               {t("home.section.auth")}
             </h2>
             <p>{t("home.auth.description")}</p>
@@ -126,7 +127,7 @@ function HomeContent() {
           </div>
         </section>
 
-        <section className="mt-6 border-t border-slate-200 pt-4 text-[10px] sm:text-[11px] text-slate-500 space-y-2">
+        <section className="mt-5 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 text-[11px] text-slate-500 space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <span>{t("common.health.check")}:</span>
             <code className="rounded bg-slate-100 px-1 py-0.5 text-[10px]">

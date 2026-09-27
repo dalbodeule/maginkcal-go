@@ -294,30 +294,33 @@ function ConfigContent() {
 
   return (
     <div
-      className={`${nanumGothic.className} min-h-screen bg-slate-100 text-slate-900 flex flex-col items-center py-4 px-2 sm:px-4`}
+      className={`${nanumGothic.className} min-h-screen bg-[#eef2f1] text-slate-900 px-3 py-4 sm:px-6 lg:py-8`}
     >
-      <main className="w-full max-w-6xl rounded-xl bg-white shadow-sm px-4 py-5 sm:px-6 sm:py-6">
-		<header className="mb-4 border-b border-slate-200 pb-3 flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between [word-break:keep-all]">
+      <main className="mx-auto w-full max-w-7xl rounded-[1.5rem] border border-slate-200/80 bg-[#fbfcfb] shadow-[0_18px_50px_rgba(15,23,42,0.08)] px-4 py-5 sm:px-7 sm:py-7">
+		<header className="mb-7 flex flex-col gap-5 border-b border-slate-200 pb-6 lg:flex-row lg:items-end lg:justify-between [word-break:keep-all]">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
+            <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-700">
+              EPD CONTROL CENTER
+            </p>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-950 sm:text-4xl">
               {t("config.title")}
             </h1>
-            <p className="mt-1 text-xs sm:text-sm text-slate-500">
+            <p className="mt-2 max-w-2xl text-xs leading-5 text-slate-500 sm:text-sm">
               {t("config.subtitle")}
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm">
-            <span className="text-slate-500 whitespace-nowrap">{t("config.nav.label")}</span>
-            <div className="inline-flex shrink-0 rounded-full border border-slate-300 bg-slate-100 p-0.5">
+          <div className="flex flex-wrap items-center gap-3 text-xs sm:text-sm">
+            <span className="whitespace-nowrap text-[11px] font-semibold text-slate-400">{t("config.nav.label")}</span>
+            <div className="inline-flex shrink-0 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
               <a
                 href="/calendar"
-                className="px-3 py-1 rounded-full whitespace-nowrap text-slate-700 hover:bg-slate-200"
+                className="rounded-lg px-3 py-1.5 whitespace-nowrap text-slate-600 transition hover:bg-slate-100"
               >
                 {t("common.goto.calendar")}
               </a>
               <a
                 href="/config"
-                className="px-3 py-1 rounded-full whitespace-nowrap bg-slate-900 text-white"
+                className="rounded-lg bg-slate-900 px-3 py-1.5 whitespace-nowrap text-white shadow-sm"
               >
                 {t("common.goto.config")}
               </a>
@@ -326,27 +329,27 @@ function ConfigContent() {
         </header>
 
         {loading && (
-          <div className="mb-3 rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          <div className="mb-4 rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-600 shadow-sm">
             {t("config.loading")}
           </div>
         )}
 
         {error && (
-          <div className="mb-3 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">
+          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">
             {error}
           </div>
         )}
 
         {saveMessage && (
-          <div className="mb-3 rounded-md bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+          <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-700">
             {saveMessage}
           </div>
         )}
 
-        <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <section className="grid grid-cols-1 gap-7 lg:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
           {/* Left: Config form */}
           <div className="space-y-4">
-            <h2 className="text-sm sm:text-base font-semibold text-slate-800">
+            <h2 className="text-base font-bold text-slate-950 sm:text-lg">
               {t("config.section.settings")}
             </h2>
 
@@ -357,12 +360,12 @@ function ConfigContent() {
             ) : (
               <>
                 {/* General */}
-                <div className="rounded-lg border border-slate-200 p-3 space-y-3">
-                  <h3 className="text-xs font-semibold text-slate-700">
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 space-y-4">
+                  <h3 className="text-sm font-bold text-slate-900">
                     {t("config.section.general")}
                   </h3>
                   <div className="space-y-2">
-                    <label className="block text-[11px] text-slate-600">
+                    <label className="block text-xs font-medium text-slate-600">
                       {t("config.timezone.label")}
                       <input
                         type="text"
@@ -370,10 +373,10 @@ function ConfigContent() {
                         onChange={(e) =>
                           setConfig({ ...config, timezone: e.target.value })
                         }
-                        className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                        className="mt-1.5 h-9 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 text-xs outline-none transition focus:border-teal-600 focus:bg-white focus:ring-2 focus:ring-teal-100"
                       />
                     </label>
-                    <label className="block text-[11px] text-slate-600">
+                    <label className="block text-xs font-medium text-slate-600">
                       {t("config.refresh.label")}
                       <input
                         type="text"
@@ -381,7 +384,7 @@ function ConfigContent() {
                         onChange={(e) =>
                           setConfig({ ...config, refresh: e.target.value })
                         }
-                        className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                        className="mt-1.5 h-9 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 text-xs outline-none transition focus:border-teal-600 focus:bg-white focus:ring-2 focus:ring-teal-100"
                       />
                     </label>
                     <div className="flex items-center justify-between gap-2">
@@ -472,10 +475,10 @@ function ConfigContent() {
                       {config.ics.map((item, idx) => (
                         <div
                           key={idx}
-                          className="rounded border border-slate-200 bg-slate-50 px-2 py-2 space-y-1"
+                          className="rounded-xl border border-slate-200 bg-slate-50/80 p-3 space-y-2"
                         >
                           <div className="flex items-center gap-2">
-                            <label className="flex-1 text-[11px] text-slate-600">
+                            <label className="flex-1 text-xs font-medium text-slate-600">
                               {t("config.ics.id")}
                               <input
                                 type="text"
@@ -483,18 +486,18 @@ function ConfigContent() {
                                 onChange={(e) =>
                                   handleUpdateICS(idx, "id", e.target.value)
                                 }
-                                className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                                className="mt-1 h-9 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
                               />
                             </label>
                             <button
                               type="button"
                               onClick={() => handleRemoveICS(idx)}
-                              className="mt-4 rounded border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] text-red-700 hover:bg-red-100"
+                              className="mt-4 rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-red-700 transition hover:bg-red-50"
                             >
                               {t("config.ics.delete")}
                             </button>
                           </div>
-                          <label className="block text-[11px] text-slate-600">
+                          <label className="block text-xs font-medium text-slate-600">
                             {t("config.ics.url")}
                             <input
                               type="text"
@@ -502,7 +505,7 @@ function ConfigContent() {
                               onChange={(e) =>
                                 handleUpdateICS(idx, "url", e.target.value)
                               }
-                              className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                              className="mt-1 h-9 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
                             />
                           </label>
                         </div>
@@ -512,8 +515,8 @@ function ConfigContent() {
                 </div>
 
                 {/* Highlight keywords + Basic Auth */}
-                <div className="rounded-lg border border-slate-200 p-3 space-y-3">
-                  <h3 className="text-xs font-semibold text-slate-700">
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 space-y-4">
+                  <h3 className="text-sm font-bold text-slate-900">
                     {t("config.highlight.section_title")}
                   </h3>
                   <label className="block text-[11px] text-slate-600">
@@ -522,7 +525,7 @@ function ConfigContent() {
                       rows={3}
                       value={config.highlight_red_keywords.join(", ")}
                       onChange={(e) => handleKeywordsChange(e.target.value)}
-                      className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                      className="mt-1.5 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs leading-5 outline-none transition focus:border-teal-600 focus:bg-white focus:ring-2 focus:ring-teal-100"
                     />
                   </label>
                   <label className="block text-[11px] text-slate-600">
@@ -532,7 +535,7 @@ function ConfigContent() {
                       value={holidayText}
                       onChange={(e) => setHolidayText(e.target.value)}
                       placeholder={t("config.holiday_prefixes.placeholder")}
-                      className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                      className="mt-1.5 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs leading-5 outline-none transition focus:border-teal-600 focus:bg-white focus:ring-2 focus:ring-teal-100"
                     />
                     <span className="mt-1 block text-slate-500">{t("config.holiday_prefixes.hint")}</span>
                   </label>
@@ -545,7 +548,7 @@ function ConfigContent() {
                         onChange={(e) =>
                           handleBasicAuthEnabled(e.target.checked)
                         }
-                        className="h-3 w-3 rounded border-slate-300"
+                        className="h-4 w-4 rounded border-slate-300 accent-teal-700"
                       />
                       {t("config.basic_auth.enable")}
                     </label>
@@ -559,7 +562,7 @@ function ConfigContent() {
                             onChange={(e) =>
                               handleBasicAuthField("username", e.target.value)
                             }
-                            className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                          className="mt-1 h-9 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 text-xs outline-none focus:border-teal-600 focus:bg-white focus:ring-2 focus:ring-teal-100"
                           />
                         </label>
                         <label className="text-[11px] text-slate-600">
@@ -570,7 +573,7 @@ function ConfigContent() {
                             onChange={(e) =>
                               handleBasicAuthField("password", e.target.value)
                             }
-                            className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                            className="mt-1 h-9 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 text-xs outline-none focus:border-teal-600 focus:bg-white focus:ring-2 focus:ring-teal-100"
                           />
                         </label>
                       </div>
@@ -578,12 +581,12 @@ function ConfigContent() {
                   </div>
                 </div>
 
-                <div className="flex justify-end">
+                <div className="sticky bottom-3 z-10 flex justify-end rounded-2xl border border-slate-200 bg-white/90 p-2 shadow-lg backdrop-blur">
                   <button
                     type="button"
                     onClick={handleSave}
                     disabled={saving}
-                    className="inline-flex items-center rounded bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+                    className="inline-flex items-center rounded-xl bg-teal-700 px-5 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {saving ? t("config.saving") : t("config.save")}
                   </button>
@@ -593,43 +596,54 @@ function ConfigContent() {
           </div>
 
           {/* Right: Preview image */}
-          <div className="space-y-3">
-            <div className="rounded-lg border border-slate-200 p-3 space-y-2 text-xs [word-break:keep-all]">
+          <div className="space-y-5 lg:sticky lg:top-6 lg:self-start">
+            <div className="rounded-2xl border border-teal-200 bg-[#e9f5f2] p-4 shadow-sm sm:p-5 text-xs [word-break:keep-all]">
+              <div className="mb-3 flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-teal-700">LIVE ACTION</p>
+                  <h2 className="mt-1 text-sm font-bold text-slate-950">{t("config.refresh_now")}</h2>
+                </div>
+                <span className={`mt-1 h-2.5 w-2.5 rounded-full ${refreshStatus?.running ? "animate-pulse bg-amber-500" : "bg-emerald-500"}`} />
+              </div>
               <button
                 type="button"
                 onClick={() => void requestRefresh()}
                 disabled={!refreshStatus || refreshStatus.running || cooldownSeconds > 0}
-                className="rounded bg-slate-900 px-3 py-1.5 font-semibold text-white disabled:opacity-50"
+                className="w-full rounded-xl bg-teal-700 px-3 py-2.5 font-bold text-white shadow-sm transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:bg-slate-400"
               >
-                {t("config.refresh_now")}
+                {refreshStatus?.running ? t("config.refresh_running") : t("config.refresh_now")}
               </button>
-              <p className="text-slate-600">
+              <p className="mt-3 text-slate-600">
                 {refreshStatus?.running
                   ? t("config.refresh_running")
                   : cooldownSeconds > 0
                     ? `${t("config.refresh_cooldown")} ${Math.floor(cooldownSeconds / 60)}:${String(cooldownSeconds % 60).padStart(2, "0")}`
                     : t("config.refresh_ready")}
               </p>
-              {refreshStatus?.last_error && <p className="text-red-700">{refreshStatus.last_error}</p>}
-              {refreshError && <p className="text-red-700">{refreshError}</p>}
-              <p className="text-slate-500">{t("config.refresh_hint")}</p>
+              {refreshStatus?.last_error && <p className="mt-2 rounded-lg bg-red-50 p-2 text-red-700">{refreshStatus.last_error}</p>}
+              {refreshError && <p className="mt-2 rounded-lg bg-red-50 p-2 text-red-700">{refreshError}</p>}
+              <p className="mt-3 text-[11px] leading-5 text-slate-500">{t("config.refresh_hint")}</p>
             </div>
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm sm:text-base font-semibold text-slate-800">
-                {t("common.preview.title")}
-              </h2>
-              <button
-                type="button"
-                onClick={() => setPreviewReloadKey((k) => k + 1)}
-                className="rounded border border-slate-300 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-700 hover:bg-slate-100"
-              >
-                {t("config.preview.refresh")}
-              </button>
-            </div>
-            <p className="text-[11px] text-slate-500">
-              {t("config.preview.hint")}
-            </p>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 flex items-center justify-center">
+            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+              <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 sm:px-5">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">OUTPUT</p>
+                  <h2 className="mt-1 text-sm font-bold text-slate-950 sm:text-base">
+                    {t("common.preview.title")}
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPreviewReloadKey((k) => k + 1)}
+                  className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-100"
+                >
+                  {t("config.preview.refresh")}
+                </button>
+              </div>
+              <p className="px-4 pt-3 text-[11px] leading-5 text-slate-500 sm:px-5">
+                {t("config.preview.hint")}
+              </p>
+            <div className="relative mx-4 mb-4 mt-3 rounded-xl border border-slate-200 bg-slate-100 p-2 sm:mx-5">
               <div className="bg-slate-900/90 text-white text-[10px] px-1.5 py-0.5 rounded absolute translate-y-[-120%] left-1/2 -translate-x-1/2 hidden lg:inline-flex">
                 {t("config.preview.aspect_hint")}
               </div>
@@ -648,6 +662,7 @@ function ConfigContent() {
                 />
               </div>
             </div>
+          </div>
           </div>
         </section>
       </main>

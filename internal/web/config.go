@@ -134,6 +134,7 @@ func (s *Server) saveConfig(w http.ResponseWriter, r *http.Request) {
 		runtimeCfg.Listen = active.Listen
 	}
 	s.current.Store(&runtimeCfg)
+	s.clearSessions()
 	s.InvalidateEventsCache()
 	select {
 	case s.changed <- struct{}{}:

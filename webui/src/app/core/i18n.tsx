@@ -49,7 +49,7 @@ const ko: Messages = {
     "/preview.png 에서 최신 캡처 이미지를 확인할 수 있습니다.",
   "home.section.auth": "인증 / 보안",
   "home.auth.description":
-    "HTTP Basic Auth 가 설정된 경우, 이 메인 페이지와 설정/캘린더 페이지에 처음 접근할 때 브라우저가 사용자 이름/비밀번호를 요청합니다.",
+    "인증이 설정된 경우 로그인 화면에서 사용자 이름과 비밀번호를 입력하면 메인, 설정, 캘린더에 접근할 수 있습니다.",
   "home.auth.description2":
     "한 번 로그인하면 같은 브라우저 세션 동안은 자동으로 인증이 유지됩니다.",
   "home.footer.description":
@@ -157,7 +157,7 @@ const en: Messages = {
     "You can see the latest captured image at /preview.png.",
   "home.section.auth": "Authentication / Security",
   "home.auth.description":
-    "If HTTP Basic Auth is enabled, the browser will prompt for username/password when you first open the main, settings, or calendar pages.",
+    "When authentication is enabled, use the login page to access the main, settings, and calendar screens.",
   "home.auth.description2":
     "After a successful login, the browser will keep the session authenticated.",
   "home.footer.description":

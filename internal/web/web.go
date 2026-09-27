@@ -1,14 +1,17 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -42,6 +45,8 @@ type Server struct {
 	batteryMu     sync.Mutex
 	batteryCache  *batteryCache
 	refresh       *RefreshManager
+	sessionsMu    sync.Mutex
+	sessions      map[string]session
 }
 
 // embeddedStatic contains the exported Next.js static build.
@@ -65,6 +70,7 @@ func NewServer(cfg *config.Config, debug bool) *Server {
 		batteryReader: battery.DefaultReader(),
 		icsClient:     &http.Client{Timeout: 10 * time.Second},
 		changed:       make(chan struct{}, 1),
+		sessions:      make(map[string]session),
 	}
 	s.current.Store(cfg)
 	s.registerRoutes()
@@ -88,8 +94,8 @@ func (s *Server) Handler() http.Handler {
 // basicAuthMiddleware wraps all handlers except /health with HTTP Basic Auth.
 func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// /health 는 항상 무인증으로 노출한다.
-		if r.URL.Path == "/health" {
+		// Public endpoints and static assets needed by the login page stay open.
+		if isPublicAuthPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -98,11 +104,23 @@ func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		if s.hasSession(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
 
 		u, p, ok := r.BasicAuth()
 		if !ok || !secureCompare(u, cfg.BasicAuth.Username) || !secureCompare(p, cfg.BasicAuth.Password) {
-			w.Header().Set("WWW-Authenticate", `Basic realm="EPDCal", charset="UTF-8"`)
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				w.Header().Set("WWW-Authenticate", `Basic realm="EPDCal", charset="UTF-8"`)
+				writeError(w, http.StatusUnauthorized, "unauthorized")
+			} else {
+				nextURL := r.URL.RequestURI()
+				if nextURL == "" {
+					nextURL = "/"
+				}
+				http.Redirect(w, r, "/login?next="+url.QueryEscape(nextURL), http.StatusFound)
+			}
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -147,6 +165,8 @@ func StartServer(ctx context.Context, s *Server) (<-chan error, error) {
 
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/health", s.handleHealth)
+	s.mux.HandleFunc("/login", s.handleLogin)
+	s.mux.HandleFunc("/logout", s.handleLogout)
 	s.mux.HandleFunc("/api/events", s.handleEvents)
 	s.mux.HandleFunc("/api/battery", s.handleBattery)
 	s.mux.HandleFunc("/api/config", s.handleConfig)
@@ -267,9 +287,46 @@ func (s *Server) staticFileServer() http.Handler {
 
 		// /health, /preview.png 는 ServeMux 에 별도 핸들러가 등록되어 있어
 		// 정상적인 경우 이 핸들러까지 도달하지 않는다.
-		// 그 외 모든 경로는 Next 정적 빌드(embedded UI)로 서빙한다.
+		// 존재하지 않는 브라우저 경로는 Next가 생성한 404 화면으로 통일한다.
+		cleanPath := strings.TrimPrefix(path, "/")
+		if cleanPath != "" {
+			if _, err := fs.Stat(sub, cleanPath); err != nil {
+				s.serveEmbeddedErrorPage(w, http.StatusNotFound, "404.html", "404/index.html")
+				return
+			}
+		}
 		fileServer.ServeHTTP(w, r)
 	})
+}
+
+func (s *Server) serveEmbeddedErrorPage(w http.ResponseWriter, status int, names ...string) {
+	s.serveEmbeddedPage(w, status, names...)
+}
+
+func (s *Server) serveEmbeddedLoginPage(w http.ResponseWriter, status int) {
+	s.serveEmbeddedPage(w, status, "login/index.html", "login.html")
+}
+
+func (s *Server) serveEmbeddedPage(w http.ResponseWriter, status int, names ...string) {
+	sub, err := fs.Sub(embeddedStatic, "static")
+	if err != nil {
+		http.Error(w, http.StatusText(status), status)
+		return
+	}
+	var body []byte
+	for _, name := range names {
+		body, err = fs.ReadFile(sub, name)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		http.Error(w, http.StatusText(status), status)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = io.Copy(w, bytes.NewReader(body))
 }
 
 // handlePreview serves the last rendered PNG preview from disk.
