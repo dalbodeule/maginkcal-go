@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,21 +21,21 @@ import (
 )
 
 // Server provides HTTP APIs for configuration and schedule access.
-// 현재는 /health 와 /api/events 두 개의 엔드포인트만 구현한다.
 type Server struct {
-	cfg   *config.Config
-	debug bool
-	mux   *http.ServeMux
+	cfg        *config.Config
+	configPath string
+	debug      bool
+	mux        *http.ServeMux
 
 	// In-memory cache for /api/events responses to avoid redundant
 	// fetch/parse/expand work on every HTTP request.
 	eventsMu    sync.RWMutex
 	eventsCache *eventsCache
 
-	// In-memory cache for battery status. This avoids hitting I2C (or
-	// even the mock) on every single HTTP call.
-	batteryMu    sync.RWMutex
-	batteryCache *batteryCache
+	// In-memory cache for battery status, including temporary read failures.
+	batteryReader battery.Reader
+	batteryMu     sync.Mutex
+	batteryCache  *batteryCache
 }
 
 // embeddedStatic contains the exported Next.js static build.
@@ -47,10 +48,16 @@ var embeddedStatic embed.FS
 
 // NewServer constructs a new Server.
 func NewServer(cfg *config.Config, debug bool) *Server {
+	configPath := "/etc/epdcal/config.yaml"
+	if debug {
+		configPath = "./config.yaml"
+	}
 	s := &Server{
-		cfg:   cfg,
-		debug: debug,
-		mux:   http.NewServeMux(),
+		cfg:           cfg,
+		configPath:    configPath,
+		debug:         debug,
+		mux:           http.NewServeMux(),
+		batteryReader: battery.DefaultReader(),
 	}
 	s.registerRoutes()
 	return s
@@ -108,20 +115,41 @@ func secureCompare(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
-// StartServer starts an HTTP server bound to cfg.Listen and serves
-// API + (추후) 정적 파일. ctx 가 cancel 되면 graceful shutdown 할 수 있도록
-// Shutdown 로직은 main 쪽에서 http.Server 래핑 시 구현하는 것을 권장한다.
-// 이 함수는 API 핸들러 구현에 포커스하기 위해 간단한 ListenAndServe 만 제공한다.
-func StartServer(_ context.Context, cfg *config.Config, debug bool) error {
+// StartServer binds the listener before returning so the first capture can
+// safely request the calendar page immediately.
+func StartServer(ctx context.Context, cfg *config.Config, debug bool, configPath string) (<-chan error, error) {
 	s := NewServer(cfg, debug)
+	s.configPath = configPath
+	listener, err := net.Listen("tcp", cfg.Listen)
+	if err != nil {
+		return nil, err
+	}
+	server := &http.Server{Handler: s.Handler()}
+	serverErrors := make(chan error, 1)
 	appLog.Info("starting HTTP server", "listen", "http://"+cfg.Listen, "debug", debug)
-	return http.ListenAndServe(cfg.Listen, s.Handler())
+	go func() {
+		err := server.Serve(listener)
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
+		}
+		serverErrors <- err
+	}()
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			appLog.Error("HTTP server shutdown failed", err)
+		}
+	}()
+	return serverErrors, nil
 }
 
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/health", s.handleHealth)
 	s.mux.HandleFunc("/api/events", s.handleEvents)
 	s.mux.HandleFunc("/api/battery", s.handleBattery)
+	s.mux.HandleFunc("/api/config", s.handleConfig)
 	s.mux.HandleFunc("/app-config.js", s.handleAppConfigJS)
 	s.mux.HandleFunc("/preview.png", s.handlePreview)
 
@@ -130,7 +158,6 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("/", s.staticFileServer())
 
 	// 추후:
-	// - /api/config
 	// - /api/refresh
 	// - /api/render
 	// - 정적 파일 서빙(Next.js export 결과) 등을 여기에 추가 예정.
@@ -144,53 +171,34 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 
 // handleBattery exposes current battery status (percent, voltage) for the Web UI.
 //
-// This endpoint uses a small in-memory cache to avoid hitting I2C (or even
-// the mock reader) on every single HTTP request. Battery status does not
-// need sub-second precision, so a short TTL is sufficient.
+// This endpoint returns an unknown status when the hardware is unavailable.
+// Results, including failures, are cached briefly to avoid hammering I2C.
 func (s *Server) handleBattery(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	const batteryCacheTTL = 30 * time.Second
-	now := time.Now()
-
-	// Fast path: return cached value if it's still fresh.
-	s.batteryMu.RLock()
-	bc := s.batteryCache
-	s.batteryMu.RUnlock()
-	if bc != nil && now.Sub(bc.updatedAt) < batteryCacheTTL {
-		resp := batteryResponse{
-			Percent:   bc.status.Percent,
-			VoltageMv: bc.status.VoltageMv,
-		}
+	w.Header().Set("Cache-Control", "no-store")
+	s.batteryMu.Lock()
+	if s.batteryCache != nil && time.Since(s.batteryCache.updatedAt) < batteryCacheTTL {
+		resp := s.batteryCache.resp
+		s.batteryMu.Unlock()
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 
-	br := battery.DefaultReader()
-	if br == nil {
-		writeError(w, http.StatusInternalServerError, "battery reader unavailable")
-		return
-	}
-
-	status, err := br.Read(ctx)
+	resp := batteryResponse{}
+	status, err := s.batteryReader.Read(r.Context())
 	if err != nil {
 		appLog.Error("battery read failed", err)
-		writeError(w, http.StatusInternalServerError, "failed to read battery")
-		return
+	} else if status.Percent < 0 || status.Percent > 100 {
+		appLog.Error("battery read failed", errors.New("invalid percentage"), "percent", status.Percent)
+	} else {
+		resp.Available = true
+		resp.Percent = &status.Percent
+		if status.VoltageMv > 0 {
+			resp.VoltageMv = &status.VoltageMv
+		}
 	}
-
-	// Update cache.
-	s.batteryMu.Lock()
-	s.batteryCache = &batteryCache{
-		status:    status,
-		updatedAt: time.Now(),
-	}
+	s.batteryCache = &batteryCache{resp: resp, updatedAt: time.Now()}
 	s.batteryMu.Unlock()
-
-	resp := batteryResponse{
-		Percent:   status.Percent,
-		VoltageMv: status.VoltageMv,
-	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -287,33 +295,36 @@ type eventsResponse struct {
 
 // eventsCache holds a cached /api/events response and its timestamp.
 type eventsCache struct {
+	key       string
 	resp      eventsResponse
 	updatedAt time.Time
 }
 
-// batteryCache holds the last known battery status and its timestamp.
+// batteryCache holds the last read result and its timestamp.
 type batteryCache struct {
-	status    battery.Status
+	resp      batteryResponse
 	updatedAt time.Time
 }
 
 // batteryResponse is the JSON response shape for /api/battery.
 type batteryResponse struct {
-	Percent   int `json:"percent"`
-	VoltageMv int `json:"voltage_mv"`
+	Available bool `json:"available"`
+	Percent   *int `json:"percent"`
+	VoltageMv *int `json:"voltage_mv"`
 }
 
 // occurrenceDTO is a JSON-friendly view of occurrences.
 type occurrenceDTO struct {
-	SourceID    string    `json:"source_id"`
-	UID         string    `json:"uid"`
-	InstanceKey string    `json:"instance_key"`
-	Summary     string    `json:"summary"`
-	Description string    `json:"description"`
-	Location    string    `json:"location"`
-	AllDay      bool      `json:"all_day"`
-	Start       time.Time `json:"start"`
-	End         time.Time `json:"end"`
+	SourceID     string    `json:"source_id"`
+	UID          string    `json:"uid"`
+	InstanceKey  string    `json:"instance_key"`
+	Summary      string    `json:"summary"`
+	Description  string    `json:"description"`
+	Location     string    `json:"location"`
+	AllDay       bool      `json:"all_day"`
+	HighlightRed bool      `json:"highlight_red"`
+	Start        time.Time `json:"start"`
+	End          time.Time `json:"end"`
 }
 
 // handleEvents returns expanded occurrences for the configured ICS sources
@@ -331,6 +342,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	rawDays := q.Get("days")
 	rawBackfill := q.Get("backfill")
+	cacheKey := rawDays + "\x00" + rawBackfill
 
 	days := parseIntDefault(rawDays, 7)
 	if days <= 0 {
@@ -354,7 +366,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	s.eventsMu.RLock()
 	ec := s.eventsCache
 	s.eventsMu.RUnlock()
-	if ec != nil && cacheNow.Sub(ec.updatedAt) < eventsCacheTTL {
+	if ec != nil && ec.key == cacheKey && cacheNow.Sub(ec.updatedAt) < eventsCacheTTL {
 		writeJSON(w, http.StatusOK, ec.resp)
 		return
 	}
@@ -467,16 +479,20 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	// Convert to DTO.
 	dtos := make([]occurrenceDTO, 0, len(expandResult.Occurrences))
 	for _, occ := range expandResult.Occurrences {
+		if occ.AllDay && !s.cfg.ShowAllDay {
+			continue
+		}
 		dtos = append(dtos, occurrenceDTO{
-			SourceID:    occ.SourceID,
-			UID:         occ.UID,
-			InstanceKey: occ.InstanceKey,
-			Summary:     occ.Summary,
-			Description: occ.Description,
-			Location:    occ.Location,
-			AllDay:      occ.AllDay,
-			Start:       occ.Start,
-			End:         occ.End,
+			SourceID:     occ.SourceID,
+			UID:          occ.UID,
+			InstanceKey:  occ.InstanceKey,
+			Summary:      occ.Summary,
+			Description:  occ.Description,
+			Location:     occ.Location,
+			AllDay:       occ.AllDay,
+			HighlightRed: shouldHighlightRed(occ.Summary, occ.Description, s.cfg.HighlightRed),
+			Start:        occ.Start,
+			End:          occ.End,
 		})
 	}
 
@@ -492,12 +508,24 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	// Update in-memory cache for subsequent requests.
 	s.eventsMu.Lock()
 	s.eventsCache = &eventsCache{
+		key:       cacheKey,
 		resp:      resp,
 		updatedAt: time.Now(),
 	}
 	s.eventsMu.Unlock()
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func shouldHighlightRed(summary, description string, keywords []string) bool {
+	text := strings.ToLower(summary + " " + description)
+	for _, keyword := range keywords {
+		needle := strings.ToLower(strings.TrimSpace(keyword))
+		if needle != "" && strings.Contains(text, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func parseIntDefault(s string, def int) int {

@@ -70,7 +70,6 @@ const ko: Messages = {
   "config.section.general": "일반",
   "config.timezone.label": "타임존 (IANA 이름, 예: Asia/Seoul)",
   "config.refresh.label": "Refresh 스케줄 (cron string, 예: */15 * * * *)",
-  "config.horizon.label": "Horizon (앞으로 표시할 일 수)",
   "config.week_start.label": "주 시작 요일",
   "config.week_start.monday": "월요일",
   "config.week_start.sunday": "일요일",
@@ -92,11 +91,9 @@ const ko: Messages = {
   "config.save": "설정 저장",
   "config.saving": "저장 중...",
   "config.loading": "설정을 불러오는 중입니다...",
-  "config.load_error":
-    "설정을 불러오는 중 오류가 발생했습니다. 백엔드 /api/config 구현 상태를 확인하세요.",
-  "config.save_error":
-    "설정을 저장하는 동안 오류가 발생했습니다. 백엔드 /api/config 구현 상태를 확인하세요.",
-  "config.save_ok": "설정이 저장되었습니다.",
+  "config.load_error": "설정을 불러오는 중 오류가 발생했습니다.",
+  "config.save_error": "설정을 저장하는 중 오류가 발생했습니다.",
+  "config.save_ok": "설정이 저장되었습니다. 서비스를 재시작하면 적용됩니다.",
   "config.preview.refresh": "Preview 새로고침",
   "config.preview.hint":
     "최신 캡처 결과를 확인하려면 \"Preview 새로고침\" 버튼을 누르거나 브라우저 캐시를 무시하고 다시 불러오십시오. 이 이미지는 Go 서버의 /preview.png 엔드포인트에서 제공됩니다.",
@@ -165,7 +162,6 @@ const en: Messages = {
   "config.section.general": "General",
   "config.timezone.label": "Timezone (IANA name, e.g. Asia/Seoul)",
   "config.refresh.label": "Refresh schedule (cron string, e.g. */15 * * * *)",
-  "config.horizon.label": "Horizon (days to show ahead)",
   "config.week_start.label": "Week start",
   "config.week_start.monday": "Monday",
   "config.week_start.sunday": "Sunday",
@@ -187,11 +183,9 @@ const en: Messages = {
   "config.save": "Save settings",
   "config.saving": "Saving...",
   "config.loading": "Loading settings...",
-  "config.load_error":
-    "Failed to load settings. Please check if the backend /api/config is implemented.",
-  "config.save_error":
-    "Failed to save settings. Please check if the backend /api/config is implemented.",
-  "config.save_ok": "Settings saved.",
+  "config.load_error": "Failed to load settings.",
+  "config.save_error": "Failed to save settings.",
+  "config.save_ok": "Settings saved. Restart the service to apply them.",
   "config.preview.refresh": "Refresh preview",
   "config.preview.hint":
     "To see the latest capture, click \"Refresh preview\" or reload ignoring browser cache. This image is served from the Go server's /preview.png endpoint.",
@@ -251,11 +245,7 @@ function detectInitialLocale(): Locale {
   if (fromServerConfig) return fromServerConfig;
 
   if (typeof navigator !== "undefined") {
-    const navLang =
-      (navigator as any).language ||
-      (navigator as any).userLanguage ||
-      (navigator as any).browserLanguage;
-    const fromNav = normalizeLocale(navLang);
+    const fromNav = normalizeLocale(navigator.language);
     if (fromNav) return fromNav;
   }
 
@@ -292,8 +282,10 @@ export function I18nProvider({ children, initialLocale }: I18nProviderProps) {
       // 캡처 파이프라인 등에서 명시적으로 지정한 로케일을 그대로 사용.
       return;
     }
-    const detected = detectInitialLocale();
-    setLocaleState(detected);
+    const timeout = window.setTimeout(() => {
+      setLocaleState(detectInitialLocale());
+    }, 0);
+    return () => window.clearTimeout(timeout);
   }, [initialLocale]);
 
   const setLocale = useCallback((next: Locale) => {

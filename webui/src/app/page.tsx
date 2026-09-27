@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import nanumGothic from "./fonts/nanum";
 import { I18nProvider, useI18n } from "@/app/core/i18n";
 
@@ -12,7 +12,7 @@ function HomeContent() {
   const [healthMessage, setHealthMessage] = useState<string>("");
   const [checking, setChecking] = useState(false);
 
-  const checkHealth = async () => {
+  const checkHealth = useCallback(async () => {
     try {
       setChecking(true);
       setHealthMessage("");
@@ -27,17 +27,20 @@ function HomeContent() {
       const text = (await res.text()).trim();
       setHealthStatus("ok");
       setHealthMessage(`${text || "OK"} (${elapsed}ms)`);
-    } catch (e: any) {
+    } catch (e: unknown) {
       setHealthStatus("error");
-      setHealthMessage(e?.message ?? t("home.health.request_failed"));
+      setHealthMessage(e instanceof Error ? e.message : t("home.health.request_failed"));
     } finally {
       setChecking(false);
     }
-  };
+  }, [t]);
 
   useEffect(() => {
-    void checkHealth();
-  }, []);
+    const timeout = window.setTimeout(() => {
+      void checkHealth();
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [checkHealth]);
 
   return (
     <div

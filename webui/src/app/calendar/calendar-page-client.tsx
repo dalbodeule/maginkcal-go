@@ -31,6 +31,7 @@ interface OccurrenceDTO {
   description: string;
   location: string;
   all_day: boolean;
+  highlight_red: boolean;
   start: string;
   end: string;
 }
@@ -66,8 +67,11 @@ function CalendarContent() {
   const [eventsLoaded, setEventsLoaded] = useState(false);
   const [batteryLoaded, setBatteryLoaded] = useState(false);
 
-  const today = useMemo(() => new Date(), []);
-  const now = today; // alias
+  const now = useMemo(() => new Date(), []);
+  const today = useMemo(
+    () => dateInTimeZone(now, displayTimezone),
+    [now, displayTimezone],
+  );
 
   // /api/events 호출: week_start, display_timezone, 이벤트 목록, 마지막 업데이트 시각만 사용
   useEffect(() => {
@@ -86,14 +90,13 @@ function CalendarContent() {
           data.week_start === "sunday" ? "sunday" : "monday";
         setWeekStart(apiWeekStart);
 
-        if (data.display_timezone) {
-          setDisplayTimezone(data.display_timezone);
-        }
+        const eventTimezone = data.display_timezone || "Asia/Seoul";
+        setDisplayTimezone(eventTimezone);
 
         // 날짜별로 occurrence 를 그룹핑
         const grouped: Record<string, OccurrenceDTO[]> = {};
         for (const occ of data.occurrences ?? []) {
-          const key = dateKeyFromISO(occ.start);
+          const key = dateKeyFromISO(occ.start, eventTimezone);
           if (!grouped[key]) {
             grouped[key] = [];
           }
@@ -105,9 +108,9 @@ function CalendarContent() {
         setLastUpdatedAt(new Date());
         setEventsLoaded(true);
         setError(null);
-      } catch (e: any) {
+      } catch (e: unknown) {
         if (!cancelled) {
-          setError(e?.message ?? t("calendar.error.load"));
+          setError(e instanceof Error ? e.message : t("calendar.error.load"));
           // 오류가 있어도 화면은 렌더링되도록 eventsLoaded 를 true 로 설정
           setEventsLoaded(true);
         }
@@ -124,30 +127,39 @@ function CalendarContent() {
   // /api/battery 호출: 배터리 퍼센트(0~100)를 가져와 5단계 인디케이터에 사용
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 5000);
 
     async function loadBattery() {
       try {
-        const res = await fetch(window.location.origin + "/api/battery");
+        const res = await fetch(window.location.origin + "/api/battery", {
+          signal: controller.signal,
+        });
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}`);
         }
-        const data: { percent?: number } = await res.json();
+        const data: { available?: boolean; percent?: number | null } = await res.json();
         if (cancelled) return;
 
-        if (typeof data.percent === "number") {
-          let p = data.percent;
-          if (p < 0) p = 0;
-          if (p > 100) p = 100;
-          setBatteryPercent(p);
-        }
+        setBatteryPercent(
+          data.available === true &&
+            typeof data.percent === "number" &&
+            Number.isInteger(data.percent) &&
+            data.percent >= 0 &&
+            data.percent <= 100
+            ? data.percent
+            : null,
+        );
         // 퍼센트가 없더라도 캡처 진행에는 지장이 없으므로 loaded 로 처리
         setBatteryLoaded(true);
       } catch {
-        // 배터리 정보는 필수는 아니므로 에러는 UI에 드러내지 않고 무시하되,
-        // 캡처가 data-ready 를 기다리며 멈추지 않도록 loaded 로 표시한다.
+        // Unknown battery status must still allow the calendar capture to finish.
         if (!cancelled) {
+          setBatteryPercent(null);
           setBatteryLoaded(true);
         }
+      } finally {
+        window.clearTimeout(timeout);
       }
     }
 
@@ -155,6 +167,8 @@ function CalendarContent() {
 
     return () => {
       cancelled = true;
+      controller.abort();
+      window.clearTimeout(timeout);
     };
   }, []);
 
@@ -196,12 +210,13 @@ function CalendarContent() {
                 hour: "2-digit",
                 minute: "2-digit",
                 hour12: false,
+                timeZone: displayTimezone,
               })}
             </p>
             <p className="mt-1 text-[28px] sm:text-sm text-slate-700 font-medium">
               {t("calendar.last_updated_prefix")}{" "}
               {lastUpdatedAt
-                ? formatDateTime(lastUpdatedAt, locale)
+                ? formatDateTime(lastUpdatedAt, locale, displayTimezone)
                 : t("calendar.loading")}
             </p>
           </div>
@@ -294,9 +309,11 @@ function CalendarContent() {
                       events.slice(0, 3).map((ev, i) => (
                         <p
                           key={i}
-                          className="text-[18px] sm:text-xs text-slate-900 font-semibold truncate"
+                          className={`text-[18px] sm:text-xs font-semibold truncate ${
+                            ev.highlight_red ? "text-red-600" : "text-slate-900"
+                          }`}
                         >
-                          {formatEventLine(ev, locale, t)}
+                          {formatEventLine(ev, locale, t, displayTimezone)}
                         </p>
                       ))
                     )}
@@ -420,15 +437,28 @@ function dateKeyFromDate(date: Date): string {
   return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
-function dateKeyFromISO(iso: string): string {
-  const d = new Date(iso);
-  return dateKeyFromDate(d);
+function dateInTimeZone(date: Date, timeZone: string): Date {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const year = Number(parts.find((p) => p.type === "year")?.value);
+  const month = Number(parts.find((p) => p.type === "month")?.value);
+  const day = Number(parts.find((p) => p.type === "day")?.value);
+  return new Date(year, month - 1, day);
+}
+
+function dateKeyFromISO(iso: string, timeZone: string): string {
+  return dateKeyFromDate(dateInTimeZone(new Date(iso), timeZone));
 }
 
 function formatEventLine(
   ev: OccurrenceDTO,
   locale: Locale,
   t: (key: string) => string,
+  timeZone: string,
 ): string {
   const title = ev.summary || t("calendar.no_title");
 
@@ -444,6 +474,7 @@ function formatEventLine(
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
+    timeZone,
   };
 
   const intl = localeToIntl(locale);
@@ -453,16 +484,18 @@ function formatEventLine(
   return `${startStr}~${endStr} ${title}`;
 }
 
-function formatDateTime(date: Date, locale: Locale): string {
+function formatDateTime(date: Date, locale: Locale, timeZone: string): string {
   const d = date.toLocaleDateString(localeToIntl(locale), {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
+    timeZone,
   });
   const tStr = date.toLocaleTimeString(localeToIntl(locale), {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
+    timeZone,
   });
   return `${d} ${tStr}`;
 }
@@ -472,7 +505,7 @@ function formatDateTime(date: Date, locale: Locale): string {
 type BatteryLevel = "empty" | "quarter" | "half" | "three-quarters" | "full";
 
 function batteryLevelFromPercent(p: number | null): BatteryLevel {
-  if (p == null) return "empty";
+  if (p == null) return "quarter";
   if (p >= 80) return "full";
   if (p >= 60) return "three-quarters";
   if (p >= 40) return "half";
@@ -516,9 +549,9 @@ function BatteryIndicator(props: { percent: number | null }) {
   return (
     <div className="absolute top-3 right-4 flex items-center gap-1 text-slate-700">
       {icon}
-      {props.percent != null && (
-        <span className="text-[20px] font-bold">{props.percent}%</span>
-      )}
+      <span className="text-[20px] font-bold">
+        {props.percent == null ? "??%" : `${props.percent}%`}
+      </span>
     </div>
   );
 }

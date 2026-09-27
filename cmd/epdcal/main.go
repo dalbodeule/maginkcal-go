@@ -78,9 +78,14 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Start HTTP server in background.
+	// Bind the HTTP listener before the initial capture can start.
+	serverErrors, err := web.StartServer(ctx, conf, flags.debug, flags.configPath)
+	if err != nil {
+		appLog.Error("failed to start HTTP server", err)
+		os.Exit(1)
+	}
 	go func() {
-		if err := web.StartServer(ctx, conf, flags.debug); err != nil {
+		if err := <-serverErrors; err != nil {
 			appLog.Error("http server failed", err)
 			cancel()
 		}
@@ -313,8 +318,8 @@ func runRefreshCycle(parentCtx context.Context, conf *config.Config, debug bool)
 // In debug mode it writes to ./cache/preview.png, otherwise to
 // /var/lib/epdcal/preview.png.
 func runCapturePipeline(parentCtx context.Context, conf *config.Config, flags flagConfig, drv *epd.CDriver) error {
-	// Derive a short-lived context for the capture operation.
-	ctx, cancel := context.WithTimeout(parentCtx, 60*time.Second)
+	const captureTimeout = 180 * time.Second
+	ctx, cancel := context.WithTimeout(parentCtx, captureTimeout)
 	defer cancel()
 
 	url := "http://" + conf.Listen + "/calendar"
@@ -334,7 +339,7 @@ func runCapturePipeline(parentCtx context.Context, conf *config.Config, flags fl
 		OutputPath: outPath,
 		Width:      0, // use defaults
 		Height:     0,
-		Timeout:    180 * time.Second,
+		Timeout:    captureTimeout,
 	}
 	// If HTTP Basic Auth is configured, pass credentials through to the
 	// headless capture helper so that it can authenticate against the

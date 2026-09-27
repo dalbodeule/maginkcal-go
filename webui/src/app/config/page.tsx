@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import nanumGothic from "../fonts/nanum";
 import { I18nProvider, useI18n } from "@/app/core/i18n";
 
@@ -73,10 +74,9 @@ function ConfigContent() {
 
         setConfig(safeConfig);
         setError(null);
-      } catch (e: any) {
+      } catch (e: unknown) {
         if (!cancelled) {
-          // /api/config 가 아직 구현되지 않았거나, 404/500 이면 여기로 들어온다.
-          setError(e?.message ?? t("config.load_error"));
+          setError(e instanceof Error ? e.message : t("config.load_error"));
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -104,11 +104,12 @@ function ConfigContent() {
         body: JSON.stringify(config),
       });
       if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
+        const data: { error?: string } = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? `HTTP ${res.status}`);
       }
       setSaveMessage(t("config.save_ok"));
-    } catch (e: any) {
-      setError(e?.message ?? t("config.save_error"));
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : t("config.save_error"));
     } finally {
       setSaving(false);
     }
@@ -116,11 +117,14 @@ function ConfigContent() {
 
   const handleAddICS = () => {
     if (!config) return;
+    const usedIds = new Set(config.ics.map((item) => item.id));
+    let nextId = 1;
+    while (usedIds.has(`calendar-${nextId}`)) nextId++;
     const next: AppConfig = {
       ...config,
       ics: [
         ...config.ics,
-        { id: `calendar-${config.ics.length + 1}`, url: "" },
+        { id: `calendar-${nextId}`, url: "" },
       ],
     };
     setConfig(next);
@@ -286,22 +290,6 @@ function ConfigContent() {
                       />
                     </label>
                     <div className="flex items-center justify-between gap-2">
-                      <label className="flex-1 text-[11px] text-slate-600">
-                        {t("config.horizon.label")}
-                        <input
-                          type="number"
-                          min={1}
-                          max={30}
-                          value={config.horizon_days}
-                          onChange={(e) =>
-                            setConfig({
-                              ...config,
-                              horizon_days: Number(e.target.value || 7),
-                            })
-                          }
-                          className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-xs"
-                        />
-                      </label>
                       <label className="flex flex-col justify-end text-[11px] text-slate-600">
                         {t("config.week_start.label")}
                         <div className="mt-1 inline-flex rounded-full border border-slate-300 bg-slate-100 p-0.5">
@@ -496,10 +484,13 @@ function ConfigContent() {
                 {t("config.preview.aspect_hint")}
               </div>
               <div className="relative w-full aspect-[1304/984] max-h-[480px] bg-slate-900/5 flex items-center justify-center overflow-hidden">
-                <img
+                <Image
                   key={previewReloadKey}
                   src={previewUrl}
                   alt="EPD preview"
+                  width={984}
+                  height={1304}
+                  unoptimized
                   className="max-w-full max-h-full object-contain border border-slate-300 bg-white"
                   onError={() =>
                     setError(t("config.preview.error"))

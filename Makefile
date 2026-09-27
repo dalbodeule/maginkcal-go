@@ -21,23 +21,23 @@ RENDER_SYSTEMD_UNIT = sed \
 
 all: build
 
-# Build Next.js web UI (if npm is available) and copy static export
+# Build Next.js web UI and copy static export
 # into internal/web/static for Go embed.FS.
 webui-build:
-	@if command -v npm >/dev/null 2>&1; then \
+	@command -v npm >/dev/null 2>&1 || { echo "npm is required for webui-build"; exit 1; }
+	@test -d webui/node_modules || { echo "Run 'cd webui && npm ci' first"; exit 1; }
+	@set -e; \
 		echo "==> Building webui (Next.js)"; \
 		cd webui && npm run build; \
 		cd ..; \
+		test -f webui/out/calendar/index.html; \
 		echo "==> Syncing webui/out -> internal/web/static (for embed)"; \
 		rm -rf internal/web/static; \
 		mkdir -p internal/web/static; \
-		cp -R webui/out/* internal/web/static/; \
+		cp -R webui/out/. internal/web/static/; \
 		echo "==> Creating webui.zip from internal/web/static"; \
 		rm -f webui.zip; \
-		zip -r webui.zip internal/web/static; \
-	else \
-		echo "==> npm not found; skipping web UI build"; \
-	fi
+		zip -qr webui.zip internal/web/static
 
 build: webui-build
 	$(GO) build -o $(BINARY) $(PKG)
@@ -101,13 +101,22 @@ clean:
 install: build systemd-install
 
 systemd-install:
-	# Create a dedicated system user for the service (no home, no shell).
-	# If the user already exists, do nothing.
+	# Ensure the service group exists before creating the dedicated user.
+	@if ! getent group $(SERVICE_GROUP) >/dev/null 2>&1; then \
+		if command -v groupadd >/dev/null 2>&1; then \
+			groupadd --system $(SERVICE_GROUP); \
+		elif command -v addgroup >/dev/null 2>&1; then \
+			addgroup --system $(SERVICE_GROUP); \
+		else \
+			echo "No groupadd/addgroup found; create system group '$(SERVICE_GROUP)' manually."; \
+			exit 1; \
+		fi; \
+	fi
 	@if ! id -u $(SERVICE_USER) >/dev/null 2>&1; then \
 		if command -v useradd >/dev/null 2>&1; then \
-			useradd --system --no-create-home --shell /usr/sbin/nologin $(SERVICE_USER); \
+			useradd --system --no-create-home --gid $(SERVICE_GROUP) --shell /usr/sbin/nologin $(SERVICE_USER); \
 		elif command -v adduser >/dev/null 2>&1; then \
-			adduser --system --no-create-home --disabled-login --shell /usr/sbin/nologin $(SERVICE_USER); \
+			adduser --system --no-create-home --disabled-login --ingroup $(SERVICE_GROUP) --shell /usr/sbin/nologin $(SERVICE_USER); \
 		else \
 			echo "No useradd/adduser found; create system user '$(SERVICE_USER)' manually."; \
 			exit 1; \

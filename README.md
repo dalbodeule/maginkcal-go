@@ -7,7 +7,7 @@ Waveshare 12.48" tri‑color e‑paper (B) 패널(1304x984)에 **ICS(iCalendar) 
 
 - 여러 개의 ICS URL 구독
 - 타임존(TZID/VTIMEZONE), 반복(RRULE), 예외(EXDATE), override(RECURRENCE-ID), all‑day 이벤트 처리
-- 로컬 Web UI 로 설정/상태 확인 및 수동 Refresh/Render
+- 로컬 Web UI 로 설정 편집, 캘린더 및 최신 Preview 확인
 - cgo 를 통해 Waveshare C 드라이버(`EPD_12in48B.h`) 호출
 - 배터리 상태 조회 시 I2C(`/dev/i2c-1`) 접근
 - Google API / OAuth / token.pickle / Python / PIL 등은 **전혀 사용하지 않음**
@@ -42,11 +42,9 @@ Waveshare 12.48" tri‑color e‑paper (B) 패널(1304x984)에 **ICS(iCalendar) 
 
 - **Web UI**
   - Web UI 를 통해:
-    - ICS URL 목록 관리
-    - refresh 주기(분 단위 또는 cron 패턴), timezone, 표시 옵션 설정
-    - “Refresh now” (fetch+render+display) 버튼
-    - “Render preview” (fetch+render only) 버튼
-    - 마지막/다음 스케줄, 마지막 오류 표시
+    - ICS URL 목록, cron 주기, timezone, 표시 옵션 편집
+    - 설정 저장 후 서비스 재시작 안내
+    - 캘린더와 마지막 생성된 Preview 확인
   - `/preview.png` 로 마지막 렌더링 이미지를 브라우저에서 확인
 
 - **디스플레이 드라이버**
@@ -87,7 +85,7 @@ Go 에서는 cgo 를 이용해 위 함수들을 thin wrapper 로 감싸 `interna
 ## 3. 요구되는 소프트웨어 / 의존성
 
 - OS: Raspberry Pi OS (Raspbian) / Linux ARM
-- Go: 1.21 이상 권장
+- Go: 1.27 이상 필요
 - C Toolchain:
   - `gcc`, `make`, etc.
 - Waveshare 12.48" (B) C 드라이버 및 GPIO 라이브러리:
@@ -134,14 +132,24 @@ cd -    # 원래 디렉터리로 복귀
 
 #### 4.2.2 Raspberry Pi 상에서 Go 바이너리 빌드
 
+Web UI 정적 파일(`internal/web/static`)은 Go 바이너리에 포함된다. 개발 머신에서
+`cd webui && npm ci && cd .. && make webui-build`로 최신 UI를 만든 다음 Pi에
+`webui.zip`을 전달한다. Pi에서는 C 드라이버 빌드 후 `make build-pi-cgo`로
+32비트 ARM용 하드웨어 드라이버 포함 바이너리를 만든다.
+
 ```bash
 cd /path/to/maginkcal-go
-go build -o epdcal ./cmd/epdcal
+make -C internal/epd/c libepddrv.a
+make build-pi-cgo
 ```
 
 빌드 결과:
 
 - `./epdcal` 실행 파일 생성
+
+`make build-pi`와 `make build-pi64`는 현재 C 드라이버를 포함하지 않아 실제
+EPD 출력에는 사용할 수 없다. 개발 머신에서 전체 빌드는 `cd webui && npm ci`
+후 저장소 루트에서 `make build`로 실행한다.
 
 #### 4.2.3 Web UI 빌드 / cross-build 참고
 
@@ -161,21 +169,15 @@ go build -o epdcal ./cmd/epdcal
 ### 4.3 설치 (예시)
 
 ```bash
-# 바이너리 설치
-sudo install -m 0755 ./epdcal /usr/local/bin/epdcal
-
-# 설정 디렉터리/파일
-sudo mkdir -p /etc/epdcal
-sudo touch /etc/epdcal/config.yaml
-sudo chmod 600 /etc/epdcal/config.yaml
-
-# 런타임 데이터 디렉터리
-sudo mkdir -p /var/lib/epdcal
-sudo chown pi:pi /var/lib/epdcal  # 필요 시 사용자에 맞게 조정
+sudo make systemd-install
+sudo systemctl daemon-reload
+sudo systemctl enable --now epdcal
 ```
 
-최초 실행 시 config 가 비어 있다면 기본값을 채우는 로직을 둘 수도 있으며,  
-그렇지 않다면 README 에 나온 예시를 참고해 수동으로 작성한다.
+`systemd-install`은 `epdcal` 계정과 그룹, 설정 파일, 캐시 디렉터리의
+권한을 맞춘다. 먼저 `make build-pi-cgo`로 바이너리를 생성해야 한다.
+설정 파일이 없으면 샘플을 설치하며, Web UI에서 저장한 설정은
+`sudo systemctl restart epdcal` 후 적용된다.
 
 ---
 
@@ -189,7 +191,7 @@ timezone: "Asia/Seoul"
 refresh: "*/15 * * * *"     # 15분마다
 horizon_days: 7
 show_all_day: true
-highlight_red_keywords:
+highlight_red:
   - "중요"
   - "휴가"
   - "deadline"
@@ -201,7 +203,6 @@ ics:
     url: "https://example.com/work.ics"
 
 basic_auth:
-  enabled: true
   username: "admin"
   password: "change-me"
 ```
@@ -214,16 +215,15 @@ basic_auth:
   - cron 스타일 문자열 (예: `*/15 * * * *`)
   - 지정한 스케줄에 맞춰 `fetch + render + display` 수행
 - `horizon_days`:
-  - 앞으로 몇 일치의 이벤트를 표시할지 (예: 7일)
+  - 이전 설정 파일과의 호환을 위해 보존한다. 현재 5주 달력에는 적용되지 않는다.
 - `show_all_day`: all‑day 섹션 표시 여부
-- `highlight_red_keywords`:
+- `highlight_red`:
   - 이벤트 제목/설명에 포함될 경우 red plane 으로 강조할 키워드 목록
 - `ics`:
   - `id`: 내부 식별자
   - `url`: ICS 구독 URL (비공개 URL 포함 가능, **로그에 풀로 찍지 않도록 주의**)
 - `basic_auth`:
-  - `enabled`: true 시 Basic Auth 활성화
-  - `username`, `password`: 인증 정보
+  - `username`, `password`: 둘 다 설정하면 Basic Auth 활성화
 
 설정 파일 퍼미션은 **0600** 으로 유지하여 URL/비밀번호가 노출되지 않도록 한다.
 
@@ -233,23 +233,20 @@ basic_auth:
 
 ### 6.1 엔드포인트 요약
 
-- `GET /`  
-  메인 HTML UI (설정/상태/액션 버튼 제공)
+- `GET /`, `GET /calendar`, `GET /config`:
+  메인, 달력, 설정 화면
 
 - `GET /api/config`  
   현재 설정 값을 JSON 형태로 반환
 
 - `POST /api/config`  
-  JSON body 를 받아 설정 값을 갱신.  
-  (예: ICS URL 추가/삭제, refresh 스케줄 변경, timezone 변경 등)
+  JSON body 를 검증한 뒤 설정 파일에 저장한다. 서비스 재시작 후 적용된다.
 
-- `POST /api/refresh`  
-  즉시 `fetch + render + display` 실행.  
-  (주기 스케줄과 별개로 수동 갱신 용도)
+- `GET /api/events`:
+  설정된 ICS 소스에서 읽은 일정 목록을 반환한다.
 
-- `POST /api/render`  
-  `fetch + render` 까지만 수행, EPD 디스플레이는 건드리지 않음.  
-  Preview PNG 업데이트 용도.
+- `GET /api/battery`:
+  배터리 잔량과 전압을 반환한다. 읽을 수 없으면 `available:false`를 반환한다.
 
 - `GET /preview.png`  
   마지막 렌더링 결과 PNG 반환.  
@@ -422,6 +419,12 @@ I2C 배터리 정보를 제대로 읽으려면 다음이 전제되어야 한다.
 - Raspberry Pi 에서 I2C 가 활성화되어 있어야 한다
 - `/dev/i2c-1` 이 존재해야 한다
 - 서비스 계정이 `i2c` 그룹 권한을 가져야 한다
+
+PiSugar 3 기본 주소는 `0x57`이며, 앱은 `/dev/i2c-1`에서 직접 배터리 잔량을 읽는다.
+PiSugar 데몬은 사용하지 않는다. 장치, 권한 또는 읽기 오류로 잔량을 알 수 없으면
+캘린더에는 낮은 배터리 아이콘과 `??%`가 표시되고 `/api/battery`는
+`{"available":false,"percent":null,"voltage_mv":null}`을 반환한다.
+`/api/config`는 설정 파일을 읽고 저장하며, 저장 전 입력을 검증한다.
 
 60초 지연은 부팅 직후 GPIO/I2C 디바이스와 네트워크가 안정화될 시간을 주기 위한 것이다.
 
