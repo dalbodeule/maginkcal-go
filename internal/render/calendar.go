@@ -165,7 +165,8 @@ func RenderCalendar(data Data) (*image.NRGBA, error) {
 			}
 			today := sameDay(day, now)
 			if today {
-				bg = color.NRGBA{R: 241, G: 243, B: 246, A: 255}
+				// Keep the today tint above the 1bpp converter's black threshold.
+				bg = color.NRGBA{R: 246, G: 246, B: 246, A: 255}
 			}
 			fillRect(img, x, y, right, bottom, bg)
 

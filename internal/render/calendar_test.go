@@ -157,6 +157,16 @@ func TestRenderCalendarCreatesPanelSizedImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The lightly tinted empty area of today's cell must remain white on the
+	// panel instead of turning the entire highlighted cell black.
+	const todayBackgroundX, todayBackgroundY = 900, 300
+	destX, destY := convert.EPDWidth-1-todayBackgroundY, todayBackgroundX
+	backgroundIndex := destY*convert.EPDByteStride + destX/8
+	backgroundMask := byte(0x80 >> (destX % 8))
+	if blackPlane[backgroundIndex]&backgroundMask == 0 || redPlane[backgroundIndex]&backgroundMask == 0 {
+		t.Fatal("today cell background was packed as ink instead of white")
+	}
+
 	redInDateCell := false
 	for y := 180; y < 230; y++ {
 		for x := 820; x < 960; x++ {
