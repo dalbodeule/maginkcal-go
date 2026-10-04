@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"epdcal/internal/convert"
 	"github.com/go-text/typesetting/fontscan"
 )
 
@@ -143,6 +144,35 @@ func TestRenderCalendarCreatesPanelSizedImage(t *testing.T) {
 	}
 	if got := img.Bounds().Size(); got.X != Width || got.Y != Height {
 		t.Fatalf("render size = %v, want %dx%d", got, Width, Height)
+	}
+	for _, p := range []image.Point{{0, 0}, {Width - 1, 0}, {0, Height - 1}, {Width - 1, Height - 1}} {
+		if got := img.NRGBAAt(p.X, p.Y); got != (color.NRGBA{R: 255, G: 255, B: 255, A: 255}) {
+			t.Errorf("corner pixel %v = %+v, want plain white", p, got)
+		}
+	}
+
+	// October 4, 2026 is Sunday in the first calendar row. Keep its red
+	// appearance in the packed red plane as well as in the PNG preview.
+	blackPlane, redPlane, err := convert.PackNRGBA(img, 90)
+	if err != nil {
+		t.Fatal(err)
+	}
+	redInDateCell := false
+	for y := 180; y < 230; y++ {
+		for x := 820; x < 960; x++ {
+			c := img.NRGBAAt(x, y)
+			if c.R > 150 && c.G < 100 && c.B < 100 {
+				destX, destY := 1303-y, x
+				index := destY*convert.EPDByteStride + destX/8
+				mask := byte(0x80 >> (destX % 8))
+				if redPlane[index]&mask == 0 && blackPlane[index]&mask != 0 {
+					redInDateCell = true
+				}
+			}
+		}
+	}
+	if !redInDateCell {
+		t.Fatal("October 4 date pixels were not routed to the EPD red plane")
 	}
 
 	var dark, red int

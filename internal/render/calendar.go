@@ -215,8 +215,6 @@ func RenderCalendar(data Data) (*image.NRGBA, error) {
 	if data.AssetDir != "" {
 		drawAssets(img, data.AssetDir, data.Layout.Assets)
 	}
-	maskPageCorners(img)
-
 	return img, nil
 }
 
@@ -285,22 +283,6 @@ func drawAssets(dst *image.NRGBA, dir string, assets []config.AssetOverlay) {
 		}
 		bounds := image.Rect(asset.X, asset.Y, asset.X+asset.Width, asset.Y+asset.Height)
 		xdraw.CatmullRom.Scale(dst, bounds, src, src.Bounds(), draw.Over, nil)
-	}
-}
-
-func maskPageCorners(img *image.NRGBA) {
-	const radius = 12
-	outer := color.NRGBA{R: 241, G: 245, B: 249, A: 255}
-	centers := [][2]int{{radius, radius - 2}, {Width - radius, radius - 2}, {radius, Height - radius + 2}, {Width - radius, Height - radius + 2}}
-	for _, center := range centers {
-		for y := max(0, center[1]-radius); y < min(Height, center[1]+radius); y++ {
-			for x := max(0, center[0]-radius); x < min(Width, center[0]+radius); x++ {
-				dx, dy := x-center[0], y-center[1]
-				if dx*dx+dy*dy > radius*radius {
-					img.SetNRGBA(x, y, outer)
-				}
-			}
-		}
 	}
 }
 
