@@ -6,6 +6,7 @@ PREFIX ?= /usr/local
 ETCDIR ?= /etc/epdcal
 VARLIB ?= /var/lib/epdcal
 SYSTEMD_DIR ?= /etc/systemd/system
+ENVFILE ?= /etc/default/epdcal
 SERVICE_USER ?= epdcal
 SERVICE_GROUP ?= epdcal
 
@@ -15,7 +16,8 @@ RENDER_SYSTEMD_UNIT = sed \
 	-e 's|@ETCDIR@|$(ETCDIR)|g' \
 	-e 's|@VARLIB@|$(VARLIB)|g' \
 	-e 's|@SERVICE_USER@|$(SERVICE_USER)|g' \
-	-e 's|@SERVICE_GROUP@|$(SERVICE_GROUP)|g'
+	-e 's|@SERVICE_GROUP@|$(SERVICE_GROUP)|g' \
+	-e 's|@ENVFILE@|$(ENVFILE)|g'
 
 .PHONY: all build build-pi build-pi64 build-pi-cgo test run clean install systemd-install webui-build
 
@@ -136,9 +138,16 @@ systemd-install:
 	fi
 	install -d $(VARLIB)
 	install -d $(VARLIB)/ics-cache
+	install -d $(VARLIB)/assets
 	chown -R $(SERVICE_USER):$(SERVICE_GROUP) $(VARLIB)
 	chmod 700 $(VARLIB)
 	chmod 700 $(VARLIB)/ics-cache
+	chmod 755 $(VARLIB)/assets
+	install -d -m 0755 $(dir $(ENVFILE))
+	@if [ ! -f $(ENVFILE) ]; then \
+		install -m 0640 -o root -g $(SERVICE_GROUP) systemd/epdcal.env.sample $(ENVFILE); \
+		echo "==> Created $(ENVFILE). Add EPDCAL_OPENWEATHER_API_KEY there if weather is enabled."; \
+	fi
 	install -d $(SYSTEMD_DIR)
 	$(RENDER_SYSTEMD_UNIT) systemd/epdcal.service > $(SYSTEMD_DIR)/epdcal.service
 	@if command -v systemctl >/dev/null 2>&1; then \

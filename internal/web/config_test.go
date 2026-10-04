@@ -11,11 +11,15 @@ import (
 	"epdcal/internal/config"
 )
 
+func coordinate(value float64) *float64 { return &value }
+
 func TestConfigAPIStoresEditsAndPreservesHiddenFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	initial := config.DefaultConfig()
 	initial.Rotation = 270
 	initial.DefaultLocale = "en"
+	initial.FontFamily = "Noto Sans KR"
+	initial.Weather = config.WeatherConfig{Enabled: true, Location: "Seoul", Latitude: coordinate(37.566535), Longitude: coordinate(126.978)}
 	initial.ICS = []config.ICSConfig{{ID: "home", Name: "Home", URL: "https://example.com/home.ics"}}
 	if err := config.Save(path, initial); err != nil {
 		t.Fatal(err)
@@ -34,6 +38,9 @@ func TestConfigAPIStoresEditsAndPreservesHiddenFields(t *testing.T) {
 	}
 	if input.ICS[0].Name != "Home" {
 		t.Fatalf("ICS name was lost in GET: %+v", input.ICS[0])
+	}
+	if input.FontFamily != "Noto Sans KR" {
+		t.Fatalf("font family was lost in GET: %q", input.FontFamily)
 	}
 	input.Refresh = "0 * * * *"
 	input.WeekStart = "sunday"
@@ -60,7 +67,8 @@ func TestConfigAPIStoresEditsAndPreservesHiddenFields(t *testing.T) {
 		len(saved.HighlightRed) != 1 || saved.HighlightRed[0] != "urgent" ||
 		len(saved.HolidayPrefixes) != 2 || saved.HolidayPrefixes[0] != "쉬는 날" ||
 		len(saved.ICS) != 1 || saved.ICS[0].Name != "Home" ||
-		saved.BasicAuth == nil || saved.BasicAuth.Username != "admin" {
+		saved.BasicAuth == nil || saved.BasicAuth.Username != "admin" ||
+		!saved.Weather.Enabled || saved.Weather.Latitude == nil || *saved.Weather.Latitude != 37.566535 || saved.Weather.Longitude == nil || *saved.Weather.Longitude != 126.978 {
 		t.Fatalf("saved config = %+v", saved)
 	}
 	if initial.BasicAuth != nil || s.Config().BasicAuth == nil || s.Config().RefreshCron != input.Refresh || s.Config().WeekStart != "sunday" {
@@ -112,5 +120,35 @@ func TestConfigAPIRejectsInvalidSchedule(t *testing.T) {
 	}
 	if saved.RefreshCron != initial.RefreshCron {
 		t.Fatalf("invalid schedule was saved: %q", saved.RefreshCron)
+	}
+}
+
+func TestConfigAPIRejectsWeatherCoordinatesWithExcessPrecision(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	initial := config.DefaultConfig()
+	if err := config.Save(path, initial); err != nil {
+		t.Fatal(err)
+	}
+	s := NewServer(initial, true)
+	s.configPath = path
+	input := editableFromConfig(initial)
+	input.Weather = config.WeatherConfig{Enabled: true, Location: "Seoul", Latitude: coordinate(37.1234567), Longitude: coordinate(127)}
+	body, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/config", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", w.Code, w.Body.String())
+	}
+	saved, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Weather.Enabled {
+		t.Fatal("invalid weather coordinates were persisted")
 	}
 }

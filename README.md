@@ -93,8 +93,16 @@ Go 에서는 cgo 를 이용해 위 함수들을 thin wrapper 로 감싸 `interna
 - Waveshare 12.48" (B) C 드라이버 및 GPIO 라이브러리:
   - 레포지토리 내 `internal/epd/c` 디렉터리에 포함된 C 소스를 정적 라이브러리로 빌드 (`make -C internal/epd/c`)
   - Debian 계열에서는 `liblgpio-dev` 패키지 필요
-- Headless 브라우저:
-  - Chromium + chromedp (메인 캡처 파이프라인에서 사용)
+- 한글 렌더링 글꼴:
+  - 시스템 한글 글꼴을 자동 탐색하며, 찾지 못한 경우 `fonts-nanum` 설치를 권장
+- Chromium/headless browser는 필요하지 않다. Go 내부 렌더러가 PNG를 생성한다.
+
+```bash
+sudo apt update
+sudo apt install build-essential liblgpio-dev
+# 시스템에 사용 가능한 한글 글꼴이 없다면 설치
+sudo apt install fonts-nanum
+```
 
 빌드/런 시 Google API, Python, PIL, token.pickle 등은 필요하지 않다.
 
@@ -110,7 +118,7 @@ internal/config/        # 설정 로딩/검증
 internal/web/           # HTTP/Web UI 서버 + 정적 파일 서빙
 internal/ics/           # ICS fetch/parse/expand
 internal/model/         # 공용 모델 (Occurrence 등)
-internal/capture/       # headless Chromium 캡처 헬퍼
+internal/render/        # Go 기반 캘린더 PNG 렌더러
 internal/convert/       # PNG(image.NRGBA) → packed plane 변환
 internal/epd/           # cgo 기반 EPD 드라이버 래퍼 및 C 소스(internal/epd/c)
 webui/                  # Next.js Web UI 소스
@@ -145,6 +153,33 @@ make -C internal/epd/c libepddrv.a
 make build-pi-cgo
 ```
 
+렌더러는 먼저 `EPDCAL_FONT_REGULAR`/`EPDCAL_FONT_BOLD` 환경 변수를 확인하고,
+지정 경로가 없거나 폰트에 필요한 한글 글리프가 없으면 `fontscan`으로 시스템
+폰트를 검색한다. Nanum Gothic, Noto CJK, Apple SD Gothic, Malgun Gothic 등을
+우선 검색한다. 사용할 수 있는 한글 폰트가 없으면 시작 단계에서 오류를 기록하고
+프로세스가 종료되므로 `journalctl -u epdcal`에서 원인을 확인할 수 있다.
+환경 변수는 `/etc/default/epdcal`에 절대 경로로 지정할 수 있다. 시스템 폰트 인덱스는
+서비스의 캐시 디렉터리에 저장되어 이후 시작 시 재사용된다.
+
+바이너리를 systemd 밖에서 직접 실행하면 바이너리가 `epdcal.env`를 자동으로 읽지는
+않는다. 신뢰할 수 있는 env 파일을 현재 셸에 export한 뒤 실행한다.
+
+```bash
+set -a
+. /etc/default/epdcal
+set +a
+./epdcal --config /etc/epdcal/config.yaml
+```
+
+다른 경로를 쓰면 `. /절대/경로/epdcal.env`로 지정한다. 이 파일을 셸 구문으로
+불러오므로 본인이 관리하는 신뢰된 파일만 사용한다. systemd 서비스에서는 unit의
+`EnvironmentFile=`이 이 경로를 관리한다.
+
+특정 패밀리를 선택하려면 `config.yaml`의 `font_family`에 `나눔고딕` 또는
+`Noto Sans KR`을 지정한다. 요청한 패밀리를 사용할 수 없으면 시작 시 오류로 알린다.
+`EPDCAL_FONT_REGULAR` 환경 변수가 지정되어 있으면 해당 파일 경로가 `font_family`보다
+우선한다. `layout_json`이 비어 있거나 공백뿐이면 기본 레이아웃 JSON으로 채워진다.
+
 빌드 결과:
 
 - `./epdcal` 실행 파일 생성
@@ -178,12 +213,28 @@ make build-pi-cgo
 sudo make systemd-install
 ```
 
-`systemd-install`은 `epdcal` 계정과 그룹, 설정 파일, 캐시 디렉터리의
+`systemd-install`은 `epdcal` 계정과 그룹, 설정 파일, 캐시/에셋 디렉터리의
 권한을 맞추고 unit 파일을 다시 생성한다. 실행 중인 서비스가 있으면
 `daemon-reload` 후 자동으로 재시작하므로 새로 설치한 바이너리가 즉시 사용된다.
 Pi에서는 먼저 `make build-pi-cgo`로 바이너리를 생성해야 한다.
 설정 파일이 없으면 샘플을 설치한다. Web UI에서 저장한 설정은
 파일과 실행 중 메모리에 함께 반영된다.
+
+설치 시 `/etc/default/epdcal`도 없을 때만 생성한다. OpenWeather 키를 쓰려면
+유닛 파일을 직접 수정하지 말고 다음처럼 환경 파일만 편집한다.
+
+```bash
+sudoedit /etc/default/epdcal
+# EPDCAL_OPENWEATHER_API_KEY=발급받은키
+sudo systemctl restart epdcal
+```
+
+재설치는 기존 환경 파일을 덮어쓰지 않는다. 이 파일은 `root:epdcal` 소유,
+`0640` 권한으로 설치되어 서비스 프로세스가 읽을 수 있다. 키는 YAML과 웹 API에
+저장/노출되지 않는다. 기본 경로는 `/etc/default/epdcal`이며, 설치 시 `ENVFILE=/다른/경로`
+Make 변수를 지정하면 환경 파일 설치 위치와 생성되는 unit의 `EnvironmentFile` 경로를
+함께 변경할 수 있다. 예: `sudo make systemd-install ENVFILE=/etc/epdcal/epdcal.env`.
+경로 변경 뒤 재설치할 때도 같은 `ENVFILE` 값을 사용해야 한다.
 
 Web UI의 `/config`에서 설정을 저장하면 `/etc/epdcal/config.yaml`에 기록된다.
 새 ICS 목록, 휴일 규칙, 인증은 다음 HTTP 요청부터 사용한다. cron 주기와
@@ -193,7 +244,7 @@ Web UI의 `/config`에서 설정을 저장하면 `/etc/epdcal/config.yaml`에 �
 권한 문제로 저장에 실패하면
 `sudo journalctl -u epdcal -n 100`에서 오류를 확인한다.
 `/config`의 **지금 EPD 갱신**은 현재 실행 중인 설정으로 ICS 조회,
-Chromium 캡처, EPD 출력을 바로 수행한다. 설정을 저장한 뒤 누르면 새 규칙을
+Go 렌더링, EPD 출력을 바로 수행한다. 설정을 저장한 뒤 누르면 새 규칙을
 반영할 수 있다.
 수동 요청은 서버에서 5분 쿨다운을 적용하며, 예약/초기 갱신이 실행 중이면
 겹쳐 실행하지 않는다. **Preview 새로고침**은 이미 만들어진 PNG만 다시 불러온다.
@@ -230,13 +281,55 @@ basic_auth:
   password: "change-me"
 ```
 
+### 달력 레이아웃 JSON과 에셋
+
+`/config`의 **달력 레이아웃 JSON**에서 글자 크기, 일정 시간 표시, 날짜별 일정 수,
+그리드 위치와 이미지 오버레이를 조정할 수 있다. 예를 들어:
+
+```json
+{
+  "show_weather": true,
+  "show_battery": true,
+  "show_event_times": true,
+  "show_empty_days": true,
+  "max_events_per_day": 3,
+  "header_font_size": 36,
+  "date_font_size": 16,
+  "event_font_size": 12,
+  "grid_top": 179,
+  "assets": [
+    { "file": "logo.png", "x": 24, "y": 132, "width": 120, "height": 40 }
+  ]
+}
+```
+
+커스텀 이미지는 `/var/lib/epdcal/assets/`에 PNG/JPEG로 넣고 JSON에는 파일명만
+지정한다. 예: `sudo install -o epdcal -g epdcal -m 0644 logo.png /var/lib/epdcal/assets/logo.png`.
+파일 크기·이미지 크기·표시 좌표는 제한되며, 경로 이동이나 임의 코드
+실행은 지원하지 않는다. 설치 전 로컬 미리보기는 프로젝트의 `./assets/`를 사용한다.
+
+날씨 위치와 활성화는 `/config`에서 설정하고, JSON의 `show_weather`로 표시 여부를
+조절한다. 화면에는 달력 헤더의 마지막 업데이트 옆에 위치, 현재 상태, 현재 기온을 한 줄로
+간단히 표시하며, 달력 그리드 위치/크기는 날씨 표시 때문에 바뀌지 않는다. OpenWeather Current Weather API 2.5의
+현재 상태만 조회하므로 OpenWeather 계정에서 해당 API 구독이 활성화되어
+있어야 한다. 날씨에는 별도 갱신 스케줄이 없으며, 전체 EPD 갱신(`refresh` cron) 시
+날씨 데이터를 확인한다. 예를 들어 `refresh: "*/30 * * * *"`로 설정하면 30분마다
+달력 전체를 다시 렌더링하고 EPD도 갱신한다. `refresh: "0 * * * *"`는 매시간 갱신이다.
+이는 날씨 패널만 따로 갱신하는 주기가 아니라 전체 화면의 갱신 주기다. 정상 응답은
+30분, 오류 응답은 5분 메모리 캐시되므로 전체 갱신 주기가 30분보다 짧으면 화면은
+갱신되어도 날씨 데이터는 캐시된 값일 수 있다.
+
+위도/경도는 각각 `-90~90`, `-180~180`의 유한한 숫자여야 하며 소수점 이하 최대 6자리까지
+허용한다. 지역명은 화면에 보여줄 라벨이고 실제 조회 위치는 위도/경도로 결정된다.
+
 주요 필드:
 
 - `listen`: HTTP 서버 bind 주소 (`127.0.0.1:8080` 권장)
 - `timezone`: 표시용 타임존 (IANA 이름, 예: `Asia/Seoul`)
 - `refresh`:
   - cron 스타일 문자열 (예: `*/15 * * * *`)
-  - 지정한 스케줄에 맞춰 `fetch + render + display` 수행
+  - 지정한 스케줄에 맞춰 `fetch + render + display` 수행. 날씨 패널이 켜져 있으면
+    이 전체 화면 갱신 때 날씨 데이터도 확인한다.
 - `horizon_days`:
   - 이전 설정 파일과의 호환을 위해 보존한다. 현재 5주 달력에는 적용되지 않는다.
 - `show_all_day`: all‑day 섹션 표시 여부
@@ -250,6 +343,9 @@ basic_auth:
   - `url`: ICS 구독 URL (비공개 URL 포함 가능, **로그에 풀로 찍지 않도록 주의**)
 - `basic_auth`:
   - `username`, `password`: 둘 다 설정하면 Web 로그인과 API Basic Auth 활성화
+- `layout_json`:
+  - JSON string 으로 렌더 레이아웃 옵션을 관리한다. 신규 설정에는 기본 예제가 저장되며,
+    오래된 설정에서 누락된 경우에도 기본값이 로드/API 응답에 적용된다.
 
 설정 파일 퍼미션은 **0600** 으로 유지하여 URL/비밀번호가 노출되지 않도록 한다.
 
@@ -277,6 +373,9 @@ basic_auth:
 
 - `GET /api/battery`:
   배터리 잔량과 전압을 반환한다. 읽을 수 없으면 `available:false`를 반환한다.
+
+- `GET /api/weather`:
+  활성화 시 OpenWeather 현재 상태를 반환한다. 패널도 현재 상태만 한 줄로 표시하며, API 키는 응답에 포함하지 않는다.
 
 - `GET /preview.png`  
   마지막 렌더링 결과 PNG 반환.  
@@ -427,7 +526,7 @@ Group=epdcal
 SupplementaryGroups=gpio
 SupplementaryGroups=i2c
 ExecStartPre=/bin/sleep 60
-MemoryDenyWriteExecute=false
+MemoryDenyWriteExecute=true
 ReadWritePaths=/etc/epdcal /var/lib/epdcal
 
 [Install]
@@ -447,6 +546,32 @@ sudo systemctl enable --now epdcal
 systemctl status epdcal
 journalctl -u epdcal -f
 ```
+
+### GPIO 권한 확인
+
+EPD 드라이버가 `gpiochip0 Export Failed`를 출력하면 PNG 렌더링 오류와는
+별개의 GPIO 접근 실패다. systemd 유닛은 `SupplementaryGroups=gpio`와
+`DeviceAllow`를 적용하지만, `sudo -u epdcal ...`로 직접 실행하면 유닛의
+보조 그룹/장치 허용 설정은 적용되지 않는다. 우선 설치된 서비스로 확인한다.
+
+```bash
+sudo systemctl restart epdcal
+systemctl show epdcal -p SupplementaryGroups -p DeviceAllow
+id epdcal
+getent group gpio
+ls -l /dev/gpiochip*
+```
+
+서비스로 실행해도 접근이 거부되면 `gpio` 그룹 존재 여부와 gpiochip 장치의
+그룹/권한을 확인한다. 직접 실행 테스트가 꼭 필요하면 `epdcal` 계정에
+`gpio` 보조 그룹을 추가한 뒤 새 프로세스로 실행한다.
+
+```bash
+sudo usermod -aG gpio epdcal
+```
+
+이 서비스는 GPIO 초기화 실패 시 렌더 전용 모드로 계속 실행하므로, 이 경우
+PNG 생성은 가능할 수 있지만 EPD 패널 업데이트는 되지 않는다.
 
 I2C 배터리 정보를 제대로 읽으려면 다음이 전제되어야 한다.
 

@@ -42,11 +42,11 @@ const ko: Messages = {
   "home.howto.step1":
     "설정 / Preview 페이지에서 ICS URL, 타임존, 스케줄 등을 설정합니다.",
   "home.howto.step2":
-    "설정이 저장되면 백엔드가 주기적으로 ICS 를 fetch/parse/expand 하고, /calendar 를 렌더링해 EPD 로 출력합니다.",
+    "설정이 저장되면 백엔드가 주기적으로 ICS 를 fetch/parse/expand 하고, 내부 Go 렌더러가 EPD 이미지를 생성해 출력합니다.",
   "home.howto.step3":
-    "/calendar 는 실제 디스플레이용 화면이며, 캡처 파이프라인도 이 경로를 사용합니다.",
+    "/calendar 는 웹 미리보기 화면이며, EPD 출력 이미지는 Go 내부 렌더러가 직접 생성합니다.",
   "home.howto.step4":
-    "/preview.png 에서 최신 캡처 이미지를 확인할 수 있습니다.",
+    "/preview.png 에서 EPD 출력용 최신 이미지를 확인할 수 있습니다.",
   "home.section.auth": "인증 / 보안",
   "home.auth.description":
     "인증이 설정된 경우 로그인 화면에서 사용자 이름과 비밀번호를 입력하면 메인, 설정, 캘린더에 접근할 수 있습니다.",
@@ -107,13 +107,13 @@ const ko: Messages = {
   "config.save_error": "설정을 저장하는 중 오류가 발생했습니다.",
   "config.save_ok": "설정 파일과 실행 중 설정에 저장했습니다. 다음 조회/갱신부터 사용합니다. 인증을 바꿨다면 페이지를 새로고침하세요.",
   "config.refresh_now": "지금 EPD 갱신",
-  "config.refresh_running": "갱신 중입니다. 캡처와 EPD 출력이 끝나면 Preview가 갱신됩니다.",
+  "config.refresh_running": "갱신 중입니다. 내부 렌더링과 EPD 출력이 끝나면 Preview가 갱신됩니다.",
   "config.refresh_cooldown": "다음 수동 갱신까지",
   "config.refresh_ready": "수동 갱신 가능",
   "config.refresh_hint": "수동 갱신은 5분 쿨다운이 적용됩니다. 저장한 설정은 다음 갱신부터 사용합니다.",
   "config.preview.refresh": "Preview 새로고침",
   "config.preview.hint":
-    "최신 캡처 결과를 확인하려면 \"Preview 새로고침\" 버튼을 누르거나 브라우저 캐시를 무시하고 다시 불러오십시오. 이 이미지는 Go 서버의 /preview.png 엔드포인트에서 제공됩니다.",
+    "최신 EPD 렌더 결과를 확인하려면 \"Preview 새로고침\" 버튼을 누르거나 브라우저 캐시를 무시하고 다시 불러오십시오. 이 이미지는 Go 서버의 /preview.png 엔드포인트에서 제공됩니다.",
   "config.preview.aspect_hint":
     "1304 × 984 EPD 비율에 가깝게 표시됩니다.",
   "config.empty_config":
@@ -150,11 +150,11 @@ const en: Messages = {
   "home.howto.step1":
     "Configure ICS URL, timezone, and schedule on the Settings / Preview page.",
   "home.howto.step2":
-    "Once saved, the backend periodically fetches/parses/expands ICS and renders /calendar to the EPD.",
+    "Once saved, the backend periodically fetches/parses/expands ICS, then the internal Go renderer creates and sends the EPD image.",
   "home.howto.step3":
-    "/calendar is the actual display view and is also used by the capture pipeline.",
+    "/calendar is a web preview; the EPD image is generated directly by the internal Go renderer.",
   "home.howto.step4":
-    "You can see the latest captured image at /preview.png.",
+    "You can see the latest EPD render at /preview.png.",
   "home.section.auth": "Authentication / Security",
   "home.auth.description":
     "When authentication is enabled, use the login page to access the main, settings, and calendar screens.",
@@ -216,13 +216,13 @@ const en: Messages = {
   "config.save_error": "Failed to save settings.",
   "config.save_ok": "Saved to config.yaml and active memory. New requests/refreshes use these settings. Reload if you changed authentication.",
   "config.refresh_now": "Refresh EPD now",
-  "config.refresh_running": "Refreshing. Preview updates after capture and display finish.",
+  "config.refresh_running": "Refreshing. Preview updates after internal rendering and display finish.",
   "config.refresh_cooldown": "Next manual refresh in",
   "config.refresh_ready": "Manual refresh available",
   "config.refresh_hint": "Manual refresh has a 5-minute cooldown. Saved settings apply on the next refresh.",
   "config.preview.refresh": "Refresh preview",
   "config.preview.hint":
-    "To see the latest capture, click \"Refresh preview\" or reload ignoring browser cache. This image is served from the Go server's /preview.png endpoint.",
+    "To see the latest EPD render, click \"Refresh preview\" or reload ignoring browser cache. This image is served from the Go server's /preview.png endpoint.",
   "config.preview.aspect_hint":
     "Displayed with an aspect ratio close to 1304 × 984 for the EPD.",
   "config.empty_config":
@@ -246,7 +246,7 @@ const messagesByLocale: Record<Locale, Messages> = {
 const STORAGE_KEY = "epdcal.locale";
 /**
  * 기본 로케일:
- * - 캘린더 페이지 캡처 시: config 에서 정한 언어를 쿼리스트링(lang)으로 넘겨서 사용
+ * - 브라우저의 /calendar 미리보기는 쿼리스트링(lang)으로 언어를 지정할 수 있음
  * - 그 외 페이지 및 쿼리 없음: 브라우저 언어 기준, 없으면 EN 으로 fallback
  */
 const DEFAULT_LOCALE: Locale = "en";
@@ -313,7 +313,7 @@ export function I18nProvider({ children, initialLocale }: I18nProviderProps) {
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (initialLocale) {
-      // 캡처 파이프라인 등에서 명시적으로 지정한 로케일을 그대로 사용.
+      // 명시적인 lang 쿼리 파라미터가 있으면 그대로 사용.
       return;
     }
     const timeout = window.setTimeout(() => {

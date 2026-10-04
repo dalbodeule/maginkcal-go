@@ -4,7 +4,22 @@
 
 ---
 
-## 0. 현재 상태 요약 (2025-12-25 기준)
+## 0. 현재 상태 요약 (2026-10-04 기준)
+
+### 0.0 최신 렌더링 경로 변경 (2026-10-04)
+
+- Zero 2W에서 Chromium 시작/렌더가 timeout 되는 문제를 피하기 위해 EPD 출력용
+  이미지 생성을 Chromium 캡처에서 Go 내부 렌더러(`internal/render`)로 교체했다.
+- 내부 렌더러는 기존 984×1304 화면의 5주 달력, 주 시작일, 한글/영문 날짜,
+  오늘/휴일/주말 강조, 일정 색/시간/말줄임, 배터리 표기를 그린 뒤 같은
+  black/red EPD plane 변환을 사용한다.
+- `/api/events` 및 `/api/battery` 응답을 사용하므로 ICS 반복 일정/휴일/키워드
+  처리는 기존 서버 로직을 그대로 재사용한다. `/calendar` 웹 페이지는 미리보기로
+  남아 있고, `/preview.png`는 실제 EPD 내부 렌더 결과를 제공한다.
+- 런타임 Chromium/chromedp 의존성은 제거했다. Raspberry Pi OS에는 한글 폰트로
+  `fonts-nanum` 패키지가 필요하다. `MemoryDenyWriteExecute=true`로 systemd
+  하드닝을 복구했다.
+- 아래의 기존 Chromium 캡처 관련 기록은 변경 전 구현을 설명하는 이력이다.
 
 ### 0.1 이미 구현/연결된 부분 (DONE)
 

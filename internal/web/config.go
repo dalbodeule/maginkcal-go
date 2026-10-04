@@ -23,16 +23,19 @@ type editableBasicAuth struct {
 }
 
 type editableConfig struct {
-	Listen               string             `json:"listen"`
-	Timezone             string             `json:"timezone"`
-	Refresh              string             `json:"refresh"`
-	HorizonDays          int                `json:"horizon_days"`
-	ShowAllDay           bool               `json:"show_all_day"`
-	HighlightRedKeywords []string           `json:"highlight_red_keywords"`
-	HolidayPrefixes      []string           `json:"holiday_prefixes"`
-	WeekStart            string             `json:"week_start"`
-	ICS                  []config.ICSConfig `json:"ics"`
-	BasicAuth            editableBasicAuth  `json:"basic_auth"`
+	Listen               string               `json:"listen"`
+	Timezone             string               `json:"timezone"`
+	Refresh              string               `json:"refresh"`
+	HorizonDays          int                  `json:"horizon_days"`
+	ShowAllDay           bool                 `json:"show_all_day"`
+	HighlightRedKeywords []string             `json:"highlight_red_keywords"`
+	HolidayPrefixes      []string             `json:"holiday_prefixes"`
+	WeekStart            string               `json:"week_start"`
+	ICS                  []config.ICSConfig   `json:"ics"`
+	BasicAuth            editableBasicAuth    `json:"basic_auth"`
+	Weather              config.WeatherConfig `json:"weather"`
+	FontFamily           string               `json:"font_family"`
+	LayoutJSON           string               `json:"layout_json"`
 }
 
 func editableFromConfig(cfg *config.Config) editableConfig {
@@ -46,6 +49,9 @@ func editableFromConfig(cfg *config.Config) editableConfig {
 		HolidayPrefixes:      cfg.HolidayPrefixes,
 		WeekStart:            cfg.WeekStart,
 		ICS:                  cfg.ICS,
+		Weather:              cfg.Weather,
+		FontFamily:           cfg.FontFamily,
+		LayoutJSON:           cfg.LayoutJSON,
 	}
 	if cfg.BasicAuth != nil {
 		result.BasicAuth = editableBasicAuth{
@@ -115,6 +121,9 @@ func (s *Server) saveConfig(w http.ResponseWriter, r *http.Request) {
 	cfg.HolidayPrefixes = input.HolidayPrefixes
 	cfg.WeekStart = input.WeekStart
 	cfg.ICS = input.ICS
+	cfg.Weather = input.Weather
+	cfg.FontFamily = strings.TrimSpace(input.FontFamily)
+	cfg.LayoutJSON = input.LayoutJSON
 	if input.BasicAuth.Enabled {
 		cfg.BasicAuth = &config.BasicAuthConfig{
 			Username: input.BasicAuth.Username,
@@ -144,6 +153,15 @@ func (s *Server) saveConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func validateEditableConfig(input editableConfig) error {
+	if _, err := config.ParseCalendarLayout(input.LayoutJSON); err != nil {
+		return err
+	}
+	if len(input.FontFamily) > 128 {
+		return errors.New("font_family must be 128 characters or fewer")
+	}
+	if err := config.ValidateWeatherConfig(input.Weather); err != nil {
+		return err
+	}
 	if _, err := time.LoadLocation(input.Timezone); err != nil {
 		return errors.New("invalid timezone")
 	}

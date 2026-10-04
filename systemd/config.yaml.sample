@@ -15,6 +15,25 @@ rotation: 90
 
 default_locale: "ko"
 
+# Optional system font family preference. Blank uses automatic Korean font selection.
+# Examples: "나눔고딕", "Noto Sans KR". EPDCAL_FONT_REGULAR overrides this setting.
+font_family: "Nanum Gothic"
+
+# Built-in calendar layout. Edit this JSON in the Web UI or here.
+layout_json: |
+  {
+    "show_weather": true,
+    "show_battery": true,
+    "show_event_times": true,
+    "show_empty_days": true,
+    "max_events_per_day": 3,
+    "header_font_size": 36,
+    "date_font_size": 16,
+    "event_font_size": 12,
+    "grid_top": 179,
+    "assets": []
+  }
+
 # Keywords that should be rendered in the red plane.
 highlight_red:
   - "휴일"

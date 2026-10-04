@@ -335,3 +335,4 @@ cache/
 *.so
 *.a
 webui.zip
+epdcal.env

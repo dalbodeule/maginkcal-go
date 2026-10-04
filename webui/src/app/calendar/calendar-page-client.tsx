@@ -154,10 +154,10 @@ function CalendarContent() {
             ? data.percent
             : null,
         );
-        // 퍼센트가 없더라도 캡처 진행에는 지장이 없으므로 loaded 로 처리
+        // The calendar preview can finish even if battery status is unavailable.
         setBatteryLoaded(true);
       } catch {
-        // Unknown battery status must still allow the calendar capture to finish.
+        // Unknown battery status must not block the calendar preview.
         if (!cancelled) {
           setBatteryPercent(null);
           setBatteryLoaded(true);
@@ -189,8 +189,7 @@ function CalendarContent() {
     return source ?? WEEKDAYS_MON_FIRST["en"];
   }, [weekStart, locale]);
 
-  // 캘린더 UI 및 캡처 파이프라인은 /api/events 와 /api/battery 가
-  // 모두 성공적으로 로딩된 이후에만 data-ready="true" 로 전환된다.
+  // Keep the calendar preview's ready state tied to both API requests.
   const ready = eventsLoaded && batteryLoaded;
 
   return (

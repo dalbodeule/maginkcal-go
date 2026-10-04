@@ -23,6 +23,7 @@ import (
 	"epdcal/internal/config"
 	"epdcal/internal/ics"
 	appLog "epdcal/internal/log"
+	"epdcal/internal/weather"
 )
 
 // Server provides HTTP APIs for configuration and schedule access.
@@ -40,13 +41,18 @@ type Server struct {
 	eventsCache *eventsCache
 
 	// In-memory cache for battery status, including temporary read failures.
-	batteryReader battery.Reader
-	icsClient     *http.Client
-	batteryMu     sync.Mutex
-	batteryCache  *batteryCache
-	refresh       *RefreshManager
-	sessionsMu    sync.Mutex
-	sessions      map[string]session
+	batteryReader   battery.Reader
+	icsClient       *http.Client
+	batteryMu       sync.Mutex
+	batteryCache    *batteryCache
+	weatherMu       sync.Mutex
+	weatherCachedAt time.Time
+	weatherConfig   *config.Config
+	weatherData     weather.Forecast
+	weatherErr      string
+	refresh         *RefreshManager
+	sessionsMu      sync.Mutex
+	sessions        map[string]session
 }
 
 // embeddedStatic contains the exported Next.js static build.
@@ -135,8 +141,8 @@ func secureCompare(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
-// StartServer binds the listener before returning so the first capture can
-// safely request the calendar page immediately.
+// StartServer binds the listener before returning so the first render can
+// safely request calendar data immediately.
 func StartServer(ctx context.Context, s *Server) (<-chan error, error) {
 	listener, err := net.Listen("tcp", s.Config().Listen)
 	if err != nil {
@@ -169,6 +175,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/logout", s.handleLogout)
 	s.mux.HandleFunc("/api/events", s.handleEvents)
 	s.mux.HandleFunc("/api/battery", s.handleBattery)
+	s.mux.HandleFunc("/api/weather", s.handleWeather)
 	s.mux.HandleFunc("/api/config", s.handleConfig)
 	s.mux.HandleFunc("/api/ics/status", s.handleICSStatus)
 	s.mux.HandleFunc("/api/refresh", s.handleRefresh)
@@ -330,7 +337,7 @@ func (s *Server) serveEmbeddedPage(w http.ResponseWriter, status int, names ...s
 }
 
 // handlePreview serves the last rendered PNG preview from disk.
-// 경로 규칙은 cmd/epdcal/main.go 의 runCapturePipeline 과 동일하게 맞춘다:
+// 경로 규칙은 cmd/epdcal/main.go 의 runRenderPipeline 과 동일하게 맞춘다:
 //   - 기본:  /var/lib/epdcal/preview.png
 //   - debug: ./cache/preview.png
 func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {

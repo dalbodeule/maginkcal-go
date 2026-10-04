@@ -20,7 +20,7 @@ type RefreshStatus struct {
 	LastError     string     `json:"last_error,omitempty"`
 }
 
-// RefreshManager serializes all capture/display work. Only manual runs consume
+// RefreshManager serializes all render/display work. Only manual runs consume
 // the cooldown; cron runs may proceed whenever the pipeline is idle.
 type RefreshManager struct {
 	mu     sync.Mutex

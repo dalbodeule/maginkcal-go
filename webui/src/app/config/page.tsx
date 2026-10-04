@@ -18,6 +18,13 @@ interface BasicAuthConfig {
   password: string;
 }
 
+interface WeatherConfig {
+  enabled: boolean;
+  location: string;
+  latitude: number | null;
+  longitude: number | null;
+}
+
 interface AppConfig {
   listen: string;
   timezone: string;
@@ -29,6 +36,9 @@ interface AppConfig {
   week_start?: WeekStart;
   ics: ICSConfigItem[];
   basic_auth?: BasicAuthConfig;
+  weather: WeatherConfig;
+  font_family: string;
+  layout_json: string;
 }
 
 interface RefreshStatus {
@@ -46,6 +56,13 @@ interface ICSStatus {
   event_count?: number;
 }
 
+function parseWeatherCoordinate(raw: string, min: number, max: number): number | null {
+  const value = raw.trim();
+  if (!/^-?(?:\d+(?:\.\d{0,6})?|\.\d{1,6})$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= min && parsed <= max ? parsed : null;
+}
+
 function ConfigContent() {
   const { t } = useI18n();
 
@@ -57,8 +74,9 @@ function ConfigContent() {
   const [previewReloadKey, setPreviewReloadKey] = useState(0);
   const [refreshStatus, setRefreshStatus] = useState<RefreshStatus | null>(null);
   const [refreshError, setRefreshError] = useState<string | null>(null);
-  const [clock, setClock] = useState(Date.now());
+  const [clock, setClock] = useState(0);
   const [holidayText, setHolidayText] = useState("");
+  const [weatherCoordinateDraft, setWeatherCoordinateDraft] = useState({ latitude: "0", longitude: "0" });
   const [icsStatuses, setICSStatuses] = useState<ICSStatus[] | null>(null);
   const [checkingICS, setCheckingICS] = useState(false);
   const [icsCheckError, setICSCheckError] = useState<string | null>(null);
@@ -142,9 +160,16 @@ function ConfigContent() {
             username: "",
             password: "",
           },
+          weather: data.weather || { enabled: false, location: "", latitude: null, longitude: null },
+          font_family: data.font_family || "",
+          layout_json: data.layout_json || "{}",
         };
 
         setConfig(safeConfig);
+        setWeatherCoordinateDraft({
+          latitude: safeConfig.weather.latitude == null ? "" : String(safeConfig.weather.latitude),
+          longitude: safeConfig.weather.longitude == null ? "" : String(safeConfig.weather.longitude),
+        });
         setHolidayText(safeConfig.holiday_prefixes.join("\n"));
         setError(null);
       } catch (e: unknown) {
@@ -165,6 +190,20 @@ function ConfigContent() {
 
   const handleSave = async () => {
     if (!config) return;
+    let weather = config.weather;
+    if (weather.enabled) {
+      const latitude = parseWeatherCoordinate(weatherCoordinateDraft.latitude, -90, 90);
+      const longitude = parseWeatherCoordinate(weatherCoordinateDraft.longitude, -180, 180);
+      if (latitude === null) {
+        setError("위도는 -90부터 90 사이, 소수점 이하 6자리 이내로 입력하세요.");
+        return;
+      }
+      if (longitude === null) {
+        setError("경도는 -180부터 180 사이, 소수점 이하 6자리 이내로 입력하세요.");
+        return;
+      }
+      weather = { ...weather, latitude, longitude };
+    }
     setSaving(true);
     setSaveMessage(null);
     setError(null);
@@ -176,6 +215,7 @@ function ConfigContent() {
         },
         body: JSON.stringify({
           ...config,
+          weather,
           holiday_prefixes: holidayText.split(/[,\n]/).map((item) => item.trim()).filter(Boolean),
         }),
       });
@@ -183,6 +223,11 @@ function ConfigContent() {
         const data: { error?: string } = await res.json().catch(() => ({}));
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
+      setConfig({ ...config, weather });
+      setWeatherCoordinateDraft({
+        latitude: weather.latitude == null ? "" : String(weather.latitude),
+        longitude: weather.longitude == null ? "" : String(weather.longitude),
+      });
       setSaveMessage(t("config.save_ok"));
       setICSStatuses(null);
     } catch (e: unknown) {
@@ -387,6 +432,21 @@ function ConfigContent() {
                         className="mt-1.5 h-9 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 text-xs outline-none transition focus:border-teal-600 focus:bg-white focus:ring-2 focus:ring-teal-100"
                       />
                     </label>
+                    <label className="block text-xs font-medium text-slate-600">
+                      글꼴 패밀리 (예: 나눔고딕, Noto Sans KR)
+                      <input
+                        type="text"
+                        value={config.font_family}
+                        onChange={(e) =>
+                          setConfig({ ...config, font_family: e.target.value })
+                        }
+                        placeholder="자동 선택"
+                        className="mt-1.5 h-9 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 text-xs outline-none transition focus:border-teal-600 focus:bg-white focus:ring-2 focus:ring-teal-100"
+                      />
+                      <span className="mt-1 block text-[11px] text-slate-500">
+                        비워 두면 시스템에서 한글 글리프가 있는 글꼴을 자동 선택합니다. EPDCAL_FONT_REGULAR를 지정하면 해당 파일이 우선합니다.
+                      </span>
+                    </label>
                     <div className="flex items-center justify-between gap-2">
                       <label className="flex flex-col justify-end text-[11px] text-slate-600">
                         {t("config.week_start.label")}
@@ -426,6 +486,28 @@ function ConfigContent() {
                       {t("config.show_all_day")}
                     </label>
                   </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 space-y-3">
+                  <h3 className="text-sm font-bold text-slate-900">날씨 표시</h3>
+                  <label className="flex items-center gap-2 text-xs text-slate-600">
+                    <input type="checkbox" checked={config.weather.enabled} onChange={(e) => setConfig({ ...config, weather: { ...config.weather, enabled: e.target.checked } })} />
+                    OpenWeather 현재 날씨 한 줄 표시
+                  </label>
+                  <p className="text-[11px] text-slate-500">달력 헤더에 지역 · 현재 상태 · 현재 기온만 간단히 표시하며, 달력 그리드 배치는 바뀌지 않습니다.</p>
+                  <p className="text-[11px] text-slate-500">API 키는 아래 레이아웃이나 설정 파일에 저장하지 않습니다. `sudo nano /etc/default/epdcal`에서 EPDCAL_OPENWEATHER_API_KEY 값을 설정하세요.</p>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    <input aria-label="날씨 표시 지역명" placeholder="표시 지역명 (예: Seoul)" value={config.weather.location} onChange={(e) => setConfig({ ...config, weather: { ...config.weather, location: e.target.value } })} className="h-9 rounded-lg border border-slate-300 bg-slate-50 px-3 text-xs" />
+                    <input aria-label="위도" type="text" inputMode="decimal" placeholder="위도 (-90~90)" value={weatherCoordinateDraft.latitude} onChange={(e) => setWeatherCoordinateDraft({ ...weatherCoordinateDraft, latitude: e.target.value })} className="h-9 rounded-lg border border-slate-300 bg-slate-50 px-3 text-xs" />
+                    <input aria-label="경도" type="text" inputMode="decimal" placeholder="경도 (-180~180)" value={weatherCoordinateDraft.longitude} onChange={(e) => setWeatherCoordinateDraft({ ...weatherCoordinateDraft, longitude: e.target.value })} className="h-9 rounded-lg border border-slate-300 bg-slate-50 px-3 text-xs" />
+                  </div>
+                  <p className="text-[11px] text-slate-500">지역명은 화면 표시용이고, 실제 날씨 조회는 위도·경도 기준입니다. 좌표는 소수점 이하 6자리까지 입력할 수 있습니다.</p>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 space-y-3">
+                  <h3 className="text-sm font-bold text-slate-900">달력 레이아웃 JSON</h3>
+                  <p className="text-[11px] text-slate-500">화면 크기와 글꼴, 일정 수, 에셋 배치를 JSON으로 조정합니다. 에셋은 `/var/lib/epdcal/assets`에 PNG/JPEG로 넣고 파일명만 지정하세요.</p>
+                  <textarea aria-label="달력 레이아웃 JSON" spellCheck={false} rows={14} value={config.layout_json} onChange={(e) => setConfig({ ...config, layout_json: e.target.value })} className="w-full rounded-lg border border-slate-300 bg-slate-50 p-3 font-mono text-xs" />
                 </div>
 
                 {/* ICS URLs */}

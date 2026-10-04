@@ -16,11 +16,11 @@ const (
 	EPDByteStride = EPDWidth / 8 // 163 bytes per row
 	EPDPlaneSize  = EPDByteStride * EPDHeight
 
-	// Web UI / 캡처용 logical 이미지 해상도(세로 레이아웃).
-	// 캡처 PNG 는 984 x 1304 정도의 세로형 이미지이므로,
+	// Web UI / EPD 렌더용 logical 이미지 해상도(세로 레이아웃).
+	// 렌더 PNG 는 984 x 1304 세로형 이미지이므로,
 	// 이를 90 또는 270도 회전시켜 패널에 맞춘다.
-	srcWidth     = 984  // 캡처된 이미지의 가로
-	srcMinHeight = 1304 // 캡처된 이미지의 최소 세로(이 이상이면 센터 크롭)
+	srcWidth     = 984  // 렌더 이미지의 가로
+	srcMinHeight = 1304 // 렌더 이미지의 최소 세로(이 이상이면 센터 크롭)
 )
 
 // PackNRGBA converts an image.NRGBA into packed 1bpp black/red planes suitable
@@ -32,9 +32,9 @@ const (
 //   - 270 : 세로 이미지를 **반시계 방향 90도(=시계 270도)** 회전해서 매핑
 //   - 그 외 값은 90도로 강제한다.
 //
-// Requirements / behavior:
+	// Requirements / behavior:
 //
-//   - img width must be exactly 984 pixels (srcWidth).
+	//   - img width must be exactly 984 pixels (srcWidth).
 //   - img height must be >= 1304 pixels (srcMinHeight).
 //   - height가 더 크면 세로 방향으로 중앙을 잘라(센터 크롭) 1304px만 사용한다.
 //   - 픽셀 분류:
@@ -86,7 +86,7 @@ func PackNRGBA(img *image.NRGBA, rotation int) (black, red []byte, err error) {
 	// 패널 좌표계 (destX, destY):
 	//   - 0 <= destX < 1304, 0 <= destY < 984
 	//
-	// 소스(캡처) 좌표계 (srcX, srcY):
+	// 소스(렌더) 좌표계 (srcX, srcY):
 	//   - 0 <= srcX < 984
 	//   - crop 내에서 0 <= (srcY - startY) < 1304
 	//

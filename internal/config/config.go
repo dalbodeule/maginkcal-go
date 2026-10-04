@@ -2,9 +2,11 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -29,6 +31,14 @@ type BasicAuthConfig struct {
 	Password string `yaml:"password" json:"password"`
 }
 
+// WeatherConfig controls the location used by the optional weather panel.
+type WeatherConfig struct {
+	Enabled   bool     `yaml:"enabled" json:"enabled"`
+	Location  string   `yaml:"location" json:"location"`
+	Latitude  *float64 `yaml:"latitude" json:"latitude"`
+	Longitude *float64 `yaml:"longitude" json:"longitude"`
+}
+
 // Config is the top-level application configuration.
 type Config struct {
 	// Listen is the HTTP listen address for the Web UI and API.
@@ -38,7 +48,7 @@ type Config struct {
 	Timezone string `yaml:"timezone" json:"timezone"`
 
 	// DefaultLocale is the default UI/display locale used for `/calendar`
-	// rendering and capture. This is typically a short code such as:
+	// and the internal EPD renderer. This is typically a short code such as:
 	//   - "ko" (Korean)
 	//   - "en" (English)
 	// It may also accept "ko-KR"/"en-US" and will be normalized accordingly.
@@ -50,7 +60,7 @@ type Config struct {
 	//   - "sunday"
 	WeekStart string `yaml:"week_start" json:"week_start"`
 
-	// Rotation specifies how the captured /calendar image should be rotated
+	// Rotation specifies how the portrait render image should be rotated
 	// before being packed for the physical panel. Allowed values (degrees):
 	//   - 90  (default, rotate clockwise)
 	//   - 270 (rotate counter-clockwise)
@@ -79,7 +89,10 @@ type Config struct {
 
 	// BasicAuth, if non-nil, enables HTTP Basic Authentication on all endpoints
 	// except /health.
-	BasicAuth *BasicAuthConfig `yaml:"basic_auth,omitempty" json:"basic_auth,omitempty"`
+	BasicAuth  *BasicAuthConfig `yaml:"basic_auth,omitempty" json:"basic_auth,omitempty"`
+	Weather    WeatherConfig    `yaml:"weather" json:"weather"`
+	FontFamily string           `yaml:"font_family" json:"font_family"`
+	LayoutJSON string           `yaml:"layout_json" json:"layout_json"`
 }
 
 // DefaultConfig returns an in-memory default configuration.
@@ -99,6 +112,7 @@ func DefaultConfig() *Config {
 		HolidayPrefixes: []string{"쉬는 날"},
 		ICS:             []ICSConfig{},
 		BasicAuth:       nil,
+		LayoutJSON:      DefaultCalendarLayoutJSON(),
 	}
 }
 
@@ -146,7 +160,7 @@ func (c *Config) Normalize() {
 		// ok
 	case 0:
 		// 0은 "회전 없음" 의미로 사용할 수 있지만, 현재 파이프라인은
-		// 세로 캡처 이미지를 전제로 하므로 기본값인 90도로 강제한다.
+		// 세로 렌더 이미지를 전제로 하므로 기본값인 90도로 강제한다.
 		c.Rotation = 90
 	default:
 		c.Rotation = 90
@@ -170,6 +184,10 @@ func (c *Config) Normalize() {
 	if c.ICS == nil {
 		c.ICS = []ICSConfig{}
 	}
+	if strings.TrimSpace(c.LayoutJSON) == "" {
+		c.LayoutJSON = DefaultCalendarLayoutJSON()
+	}
+	c.FontFamily = strings.TrimSpace(c.FontFamily)
 }
 
 // Load loads configuration from the given YAML path.
@@ -206,6 +224,9 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 	cfg.Normalize()
+	if err := ValidateWeatherConfig(cfg.Weather); err != nil {
+		return nil, fmt.Errorf("invalid weather config: %w", err)
+	}
 
 	return &cfg, nil
 }
@@ -226,6 +247,9 @@ func Save(path string, cfg *Config) error {
 	}
 
 	cfg.Normalize()
+	if err := ValidateWeatherConfig(cfg.Weather); err != nil {
+		return fmt.Errorf("invalid weather config: %w", err)
+	}
 
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {

@@ -2,27 +2,26 @@ package main
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
 	"flag"
-	"image"
-	"image/draw"
+	"fmt"
 	"image/png"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/robfig/cron/v3"
 
 	"epdcal/internal/buildinfo"
-	"epdcal/internal/capture"
 	"epdcal/internal/config"
 	"epdcal/internal/convert"
 	"epdcal/internal/epd"
-	"epdcal/internal/ics"
 	appLog "epdcal/internal/log"
+	"epdcal/internal/render"
 	"epdcal/internal/web"
 )
 
@@ -58,6 +57,10 @@ func main() {
 	// CLI --listen overrides config file listen if provided.
 	if flags.listen != "" {
 		conf.Listen = flags.listen
+	}
+	if err := render.CheckFonts(conf.FontFamily); err != nil {
+		appLog.Error("font check failed; epdcal cannot render the calendar", err)
+		os.Exit(1)
 	}
 
 	appLog.Info("effective config",
@@ -111,15 +114,12 @@ func main() {
 	server.SetConfigPath(flags.configPath)
 	refresh := web.NewRefreshManager(ctx, func(ctx context.Context) error {
 		active := server.Config()
-		if err := runRefreshCycle(ctx, active, flags.debug); err != nil {
-			return err
-		}
 		server.InvalidateEventsCache()
-		return runCapturePipeline(ctx, active, flags, epdDrv)
+		return runRenderPipeline(ctx, active, flags, epdDrv)
 	})
 	defer refresh.WaitIdle()
 	server.SetRefreshManager(refresh)
-	// Bind before Chromium requests /calendar during the initial capture.
+	// Bind before the initial render requests calendar data from the API.
 	serverErrors, err := web.StartServer(ctx, server)
 	if err != nil {
 		appLog.Error("failed to start HTTP server", err)
@@ -136,7 +136,7 @@ func main() {
 	if flags.once {
 		appLog.Info("running in once mode (single refresh cycle)")
 		if _, err := refresh.RunScheduled(ctx); err != nil {
-			appLog.Error("refresh/capture failed in once mode", err)
+			appLog.Error("refresh/render failed in once mode", err)
 			os.Exit(1)
 		}
 
@@ -151,7 +151,7 @@ func main() {
 
 	// Initial immediate run.
 	if _, err := refresh.RunScheduled(ctx); err != nil {
-		appLog.Error("initial refresh/capture failed", err)
+		appLog.Error("initial refresh/render failed", err)
 	}
 
 	if err := runScheduler(ctx, server, refresh); err != nil {
@@ -191,7 +191,7 @@ func runScheduler(ctx context.Context, server *web.Server, refresh *web.RefreshM
 			if started, err := refresh.RunScheduled(ctx); !started {
 				appLog.Info("scheduled refresh skipped; pipeline busy")
 			} else if err != nil {
-				appLog.Error("scheduled refresh/capture failed", err)
+				appLog.Error("scheduled refresh/render failed", err)
 			}
 		}
 	}
@@ -204,8 +204,8 @@ func parseFlags() flagConfig {
 	flag.StringVar(&cfg.configPath, "config", "/etc/epdcal/config.yaml", "Path to config file")
 	flag.StringVar(&cfg.listen, "listen", "", "HTTP listen address (overrides config if set)")
 	flag.BoolVar(&cfg.once, "once", false, "Run one fetch+parse cycle and exit")
-	flag.BoolVar(&cfg.renderOnly, "render-only", false, "Render only; do not touch display hardware (reserved)")
-	flag.BoolVar(&cfg.dump, "dump", false, "Dump debug artifacts (black.bin, red.bin, preview.png) (reserved)")
+	flag.BoolVar(&cfg.renderOnly, "render-only", false, "Render only; do not touch display hardware")
+	flag.BoolVar(&cfg.dump, "dump", false, "Write black.bin and red.bin debug artifacts")
 	flag.BoolVar(&cfg.debug, "debug", false, "Debug mode: use ./config.yaml and ./cache instead of /etc and /var/lib")
 
 	flag.Parse()
@@ -213,192 +213,119 @@ func parseFlags() flagConfig {
 	return cfg
 }
 
-// runRefreshCycle performs a single ICS fetch+parse cycle for all configured
-// ICS sources. For now it only logs counts; later this will feed recurrence
-// expansion, rendering, and EPD display.
-func runRefreshCycle(parentCtx context.Context, conf *config.Config, debug bool) error {
-	startTime := time.Now()
-	appLog.Info("refresh cycle start", "start_time", startTime.Format(time.RFC3339), "ics_count", len(conf.ICS), "debug", debug)
-
-	if len(conf.ICS) == 0 {
-		appLog.Info("no ICS sources configured; skipping refresh cycle")
-		return nil
-	}
-
-	// Derive a cycle-scoped context with timeout to avoid hanging forever
-	// on slow/unresponsive ICS servers.
-	ctx, cancel := context.WithTimeout(parentCtx, 60*time.Second)
+// runRenderPipeline renders the server's calendar data directly without a browser.
+func runRenderPipeline(parentCtx context.Context, conf *config.Config, flags flagConfig, drv *epd.CDriver) error {
+	const renderTimeout = 180 * time.Second
+	ctx, cancel := context.WithTimeout(parentCtx, renderTimeout)
 	defer cancel()
-
-	// Build source list from config.
-	sources := make([]ics.Source, 0, len(conf.ICS))
-	for _, csrc := range conf.ICS {
-		if csrc.URL == "" {
-			continue
-		}
-		id := csrc.ID
-		if id == "" {
-			// Fallback to name or short URL if ID is missing.
-			if csrc.Name != "" {
-				id = csrc.Name
-			} else {
-				id = csrc.URL
-			}
-		}
-		sources = append(sources, ics.Source{
-			ID:  id,
-			URL: csrc.URL,
-		})
-	}
-
-	if len(sources) == 0 {
-		appLog.Info("no valid ICS sources (all missing URLs); skipping refresh cycle")
-		return nil
-	}
-
-	// cacheDir 선택:
-	// - 기본: /var/lib/epdcal/ics-cache
-	// - debug 모드: ./cache/ics-cache (개발 환경에서 root 없이 사용)
-	const defaultCacheDir = "/var/lib/epdcal/ics-cache"
-	cacheDir := defaultCacheDir
-	if debug {
-		cacheDir = "./cache/ics-cache"
-	}
-	fetcher := ics.NewFetcher(cacheDir)
-
-	// Fetch all ICS feeds.
-	fetchResults, fetchErrs := fetcher.FetchAll(ctx, sources)
-	if len(fetchErrs) > 0 {
-		appLog.Error("one or more ICS fetches failed", errorsAggregate(fetchErrs), "error_count", len(fetchErrs))
-	}
-
-	totalParsedEvents := 0
-
-	for _, res := range fetchResults {
-		parsed, err := ics.ParseICS(res.Source, res.Body)
-		if err != nil {
-			appLog.Error("ics parse for source failed", err, "id", res.Source.ID, "url", icsRedactedURL(res.Source))
-			continue
-		}
-		totalParsedEvents += len(parsed)
-
-		appLog.Info("ics source processed",
-			"id", res.Source.ID,
-			"from_cache", res.FromCache,
-			"event_count", len(parsed),
-		)
-
-		// TODO: store parsed events into a shared model/cache so that
-		// rendering/scheduling can consume them.
-	}
-
-	elapsed := time.Since(startTime)
-	appLog.Info("refresh cycle completed",
-		"duration", elapsed.String(),
-		"parsed_event_total", totalParsedEvents,
-	)
-
-	return nil
-}
-
-// runCapturePipeline performs a Chromium-based PNG capture of the
-// /calendar page using the capture.CaptureCalendarPNG helper.
-//
-//   - 주기적인 refresh 파이프라인에서 사용되어, 항상 최신 캘린더 뷰를
-//     preview.png 로 유지한다.
-//   - also used in once mode to validate that the whole stack (web + capture)
-//     is working end-to-end.
-//
-// In debug mode it writes to ./cache/preview.png, otherwise to
-// /var/lib/epdcal/preview.png.
-func runCapturePipeline(parentCtx context.Context, conf *config.Config, flags flagConfig, drv *epd.CDriver) error {
-	const captureTimeout = 180 * time.Second
-	ctx, cancel := context.WithTimeout(parentCtx, captureTimeout)
-	defer cancel()
-
-	url := "http://" + conf.Listen + "/calendar"
 
 	outPath := "/var/lib/epdcal/preview.png"
 	if flags.debug {
 		outPath = "./cache/preview.png"
 	}
+	appLog.Info("starting internal calendar render", "output", outPath)
 
-	appLog.Info("starting chromium capture",
-		"url", url,
-		"output", outPath,
-	)
-
-	opts := capture.CaptureOptions{
-		URL:        url,
-		OutputPath: outPath,
-		Width:      0, // use defaults
-		Height:     0,
-		Timeout:    captureTimeout,
+	apiURL := "http://" + loopbackAddress(conf.Listen)
+	client := &http.Client{Timeout: 60 * time.Second}
+	var events struct {
+		Occurrences  []render.Occurrence `json:"occurrences"`
+		HolidayDates []string            `json:"holiday_dates"`
+		Timezone     string              `json:"display_timezone"`
+		WeekStart    string              `json:"week_start"`
 	}
-	// If HTTP Basic Auth is configured, pass credentials through to the
-	// headless capture helper so that it can authenticate against the
-	// protected /calendar endpoint.
-	if conf.BasicAuth != nil &&
-		conf.BasicAuth.Username != "" &&
-		conf.BasicAuth.Password != "" {
-		opts.BasicAuthUsername = conf.BasicAuth.Username
-		opts.BasicAuthPassword = conf.BasicAuth.Password
-		appLog.Info("chromium capture using HTTP basic auth")
+	if err := getJSON(ctx, client, apiURL+"/api/events", conf.BasicAuth, &events); err != nil {
+		return fmt.Errorf("render: load calendar events: %w", err)
 	}
 
-	if err := capture.CaptureCalendarPNG(ctx, opts); err != nil {
-		return err
+	var batteryInfo struct {
+		Available bool `json:"available"`
+		Percent   *int `json:"percent"`
+	}
+	if err := getJSON(ctx, client, apiURL+"/api/battery", conf.BasicAuth, &batteryInfo); err != nil {
+		appLog.Error("battery status unavailable for render", err)
+	}
+	if !batteryInfo.Available {
+		batteryInfo.Percent = nil
+	}
+	layout, err := config.ParseCalendarLayout(conf.LayoutJSON)
+	if err != nil {
+		return fmt.Errorf("render: invalid layout config: %w", err)
+	}
+	var weatherInfo struct {
+		Available bool `json:"available"`
+		Forecast  struct {
+			Location    string   `json:"location"`
+			Current     string   `json:"current"`
+			CurrentTemp *float64 `json:"current_temp"`
+		} `json:"forecast"`
+	}
+	var weatherPanel *render.Weather
+	if conf.Weather.Enabled && layout.ShowWeather {
+		if err := getJSON(ctx, client, apiURL+"/api/weather", conf.BasicAuth, &weatherInfo); err != nil || !weatherInfo.Available {
+			if err == nil {
+				err = fmt.Errorf("weather data unavailable")
+			}
+			appLog.Error("weather unavailable for render", err)
+		} else {
+			panel := render.Weather{Location: weatherInfo.Forecast.Location, Current: weatherInfo.Forecast.Current, CurrentTemp: weatherInfo.Forecast.CurrentTemp}
+			weatherPanel = &panel
+		}
+	}
+	assetDir := "/var/lib/epdcal/assets"
+	if flags.debug {
+		assetDir = "./assets"
 	}
 
-	appLog.Info("chromium capture completed", "output", outPath)
-
-	// Load the captured PNG, convert to NRGBA, then pack into black/red planes.
-	f, err := os.Open(outPath)
+	img, err := render.RenderCalendar(render.Data{
+		Now:          time.Now(),
+		Locale:       conf.DefaultLocale,
+		Timezone:     events.Timezone,
+		WeekStart:    events.WeekStart,
+		Occurrences:  events.Occurrences,
+		HolidayDates: events.HolidayDates,
+		Battery:      batteryInfo.Percent,
+		Layout:       layout,
+		AssetDir:     assetDir,
+		FontFamily:   conf.FontFamily,
+		Weather:      weatherPanel,
+	})
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+		return fmt.Errorf("render: create output directory: %w", err)
+	}
+	file, err := os.Create(outPath)
+	if err != nil {
+		return fmt.Errorf("render: create PNG: %w", err)
+	}
+	if err := png.Encode(file, img); err != nil {
+		file.Close()
+		return fmt.Errorf("render: encode PNG: %w", err)
+	}
+	if err := file.Chmod(0o644); err != nil {
+		file.Close()
+		return fmt.Errorf("render: set PNG permissions: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("render: close PNG: %w", err)
+	}
+	appLog.Info("internal calendar render completed", "output", outPath)
 
-	img, err := png.Decode(f)
+	black, red, err := convert.PackNRGBA(img, conf.Rotation)
 	if err != nil {
 		return err
 	}
 
-	var nrgba *image.NRGBA
-	if v, ok := img.(*image.NRGBA); ok {
-		nrgba = v
-	} else {
-		// Convert to NRGBA via draw.Draw.
-		bounds := img.Bounds()
-		tmp := image.NewNRGBA(bounds)
-		draw.Draw(tmp, bounds, img, bounds.Min, draw.Src)
-		nrgba = tmp
-	}
-
-	black, red, err := convert.PackNRGBA(nrgba, conf.Rotation)
-	if err != nil {
-		return err
-	}
-
-	// If --dump is enabled, write black.bin and red.bin alongside preview.png.
 	if flags.dump {
 		dir := filepath.Dir(outPath)
-		blackPath := filepath.Join(dir, "black.bin")
-		redPath := filepath.Join(dir, "red.bin")
-
-		if err := os.WriteFile(blackPath, black, 0o644); err != nil {
-			appLog.Error("failed to write black.bin", err, "path", blackPath)
-		} else {
-			appLog.Info("wrote black.bin", "path", blackPath)
-		}
-		if err := os.WriteFile(redPath, red, 0o644); err != nil {
-			appLog.Error("failed to write red.bin", err, "path", redPath)
-		} else {
-			appLog.Info("wrote red.bin", "path", redPath)
+		for name, data := range map[string][]byte{"black.bin": black, "red.bin": red} {
+			if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
+				return fmt.Errorf("render: write %s: %w", name, err)
+			}
 		}
 	}
 
-	// If render-only or no EPD driver is available, stop after generating planes.
 	if flags.renderOnly || drv == nil {
 		return nil
 	}
@@ -412,24 +339,32 @@ func runCapturePipeline(parentCtx context.Context, conf *config.Config, flags fl
 	return nil
 }
 
-// errorsAggregate creates a simple aggregated error message for logging.
-func errorsAggregate(errs []error) error {
-	if len(errs) == 0 {
-		return nil
+func getJSON(ctx context.Context, client *http.Client, endpoint string, auth *config.BasicAuthConfig, target any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return err
 	}
-	// Simple join; no need for full multi-error type at this stage.
-	var b strings.Builder
-	for i, e := range errs {
-		if i > 0 {
-			b.WriteString("; ")
-		}
-		b.WriteString(e.Error())
+	if auth != nil {
+		req.SetBasicAuth(auth.Username, auth.Password)
 	}
-	return errors.New(b.String())
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("GET %s returned HTTP %d", req.URL.Path, resp.StatusCode)
+	}
+	return json.NewDecoder(resp.Body).Decode(target)
 }
 
-// icsRedactedURL is a tiny wrapper to avoid leaking actual URLs from main.
-func icsRedactedURL(src ics.Source) string {
-	// We intentionally do not log the actual URL from main.
-	return "ics://source(" + src.ID + ")"
+func loopbackAddress(listen string) string {
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		return listen
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, port)
 }
