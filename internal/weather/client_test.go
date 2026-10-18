@@ -35,14 +35,14 @@ func TestFetchCurrentWeather25(t *testing.T) {
 		if r.URL.Query().Get("lat") != "37.5" || r.URL.Query().Get("lon") != "127" {
 			return nil, fmt.Errorf("unexpected coordinates: lat=%q lon=%q", r.URL.Query().Get("lat"), r.URL.Query().Get("lon"))
 		}
-		body := `{"weather":[{"description":"구름 조금"}],"main":{"temp":18.6}}`
+		body := `{"weather":[{"id":801,"description":"few clouds"}],"main":{"temp":18.6}}`
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 	})}
 	got, err := Fetch(context.Background(), client, config.WeatherConfig{Enabled: true, Location: "Seoul", Latitude: coordinate(37.5), Longitude: coordinate(127)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Current != "구름 조금" || got.CurrentTemp == nil || *got.CurrentTemp != 18.6 || len(got.Days) != 0 {
+	if got.Current != "few clouds" || got.CurrentCode != 801 || got.CurrentTemp == nil || *got.CurrentTemp != 18.6 || len(got.Days) != 0 {
 		t.Fatalf("unexpected forecast: %+v", got)
 	}
 	if requestCount != 1 {

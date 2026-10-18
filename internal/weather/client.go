@@ -21,6 +21,7 @@ import (
 type Forecast struct {
 	Location    string   `json:"location"`
 	Current     string   `json:"current"`
+	CurrentCode int      `json:"current_code,omitempty"`
 	CurrentTemp *float64 `json:"current_temp,omitempty"`
 	Days        []Day    `json:"days"`
 }
@@ -37,6 +38,7 @@ type apiResponse struct {
 		Temp json.RawMessage `json:"temp"`
 	} `json:"main"`
 	Weather []struct {
+		ID          int    `json:"id"`
 		Description string `json:"description"`
 	} `json:"weather"`
 }
@@ -68,7 +70,7 @@ func Fetch(ctx context.Context, client *http.Client, cfg config.WeatherConfig) (
 	if err := json.Unmarshal(current.Main.Temp, &temperature); err != nil || math.IsNaN(temperature) || math.IsInf(temperature, 0) {
 		return Forecast{}, fmt.Errorf("weather: current endpoint returned an invalid temperature")
 	}
-	out := Forecast{Location: strings.TrimSpace(cfg.Location), Current: current.Weather[0].Description, CurrentTemp: &temperature, Days: []Day{}}
+	out := Forecast{Location: strings.TrimSpace(cfg.Location), Current: current.Weather[0].Description, CurrentCode: current.Weather[0].ID, CurrentTemp: &temperature, Days: []Day{}}
 	return out, nil
 }
 

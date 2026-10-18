@@ -54,9 +54,10 @@ type Data struct {
 }
 
 type Weather struct {
-	Location    string
-	Current     string
-	CurrentTemp *float64
+	Location      string
+	Current       string
+	ConditionCode int
+	CurrentTemp   *float64
 }
 
 type faceSet struct {
@@ -211,7 +212,7 @@ func RenderCalendar(data Data) (*image.NRGBA, error) {
 		}
 	}
 	if data.Weather != nil && data.Layout.ShowWeather {
-		drawWeather(img, fonts, *data.Weather)
+		drawWeather(img, fonts, *data.Weather, data.Locale)
 	}
 	if data.AssetDir != "" {
 		drawAssets(img, data.AssetDir, data.Layout.Assets)
@@ -219,13 +220,13 @@ func RenderCalendar(data Data) (*image.NRGBA, error) {
 	return img, nil
 }
 
-func drawWeather(img *image.NRGBA, fonts *faceSet, weather Weather) {
+func drawWeather(img *image.NRGBA, fonts *faceSet, weather Weather, locale string) {
 	parts := make([]string, 0, 3)
 	if location := strings.TrimSpace(weather.Location); location != "" {
 		parts = append(parts, location)
 	}
 	if current := strings.TrimSpace(weather.Current); current != "" {
-		parts = append(parts, current)
+		parts = append(parts, localizeWeatherCondition(weather.ConditionCode, current, locale))
 	}
 	if weather.CurrentTemp != nil {
 		parts = append(parts, fmt.Sprintf("%.0f°", *weather.CurrentTemp))

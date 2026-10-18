@@ -256,6 +256,7 @@ func runRenderPipeline(parentCtx context.Context, conf *config.Config, flags fla
 		Forecast  struct {
 			Location    string   `json:"location"`
 			Current     string   `json:"current"`
+			CurrentCode int      `json:"current_code"`
 			CurrentTemp *float64 `json:"current_temp"`
 		} `json:"forecast"`
 	}
@@ -267,7 +268,7 @@ func runRenderPipeline(parentCtx context.Context, conf *config.Config, flags fla
 			}
 			appLog.Error("weather unavailable for render", err)
 		} else {
-			panel := render.Weather{Location: weatherInfo.Forecast.Location, Current: weatherInfo.Forecast.Current, CurrentTemp: weatherInfo.Forecast.CurrentTemp}
+			panel := render.Weather{Location: weatherInfo.Forecast.Location, Current: weatherInfo.Forecast.Current, ConditionCode: weatherInfo.Forecast.CurrentCode, CurrentTemp: weatherInfo.Forecast.CurrentTemp}
 			weatherPanel = &panel
 		}
 	}
